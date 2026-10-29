@@ -48,7 +48,7 @@ def run(ctx: Context, report: Report) -> None:
     _check_files_insert(ctx, report)
     _check_files_delete(ctx, report)
     _check_files_physical_delete(ctx, report)
-    _check_user_profiles(ctx, report)
+    _check_users(ctx, report)
     _check_areas(ctx, report)
     _check_manager_areas(ctx, report)
     _check_audit(ctx, report)
@@ -309,7 +309,7 @@ def _check_files_insert(ctx: Context, report: Report) -> None:
             AREA_A,
             "tests/new-9",
             extra_columns=", deleted_at, deleted_by_id, deleted_by_email",
-            extra_values=", now(), 'x', 'x@example.com'",
+            extra_values=f", now(), '{STANDARD_A}', 'x@example.com'",
         ),
         "no se puede cargar un archivo ya eliminado",
         containing=RLS_VIOLATION,
@@ -318,9 +318,9 @@ def _check_files_insert(ctx: Context, report: Report) -> None:
     # Un usuario desactivado pierde el acceso en la siguiente acción.
     ctx.owner.run(
         f"""
-        UPDATE app.user_profiles
+        UPDATE app.users
            SET is_active = false, deactivated_at = now()
-         WHERE user_id = '{STANDARD_A}'
+         WHERE id = '{STANDARD_A}'
         """
     )
     report.check_fails(
@@ -331,9 +331,9 @@ def _check_files_insert(ctx: Context, report: Report) -> None:
     )
     ctx.owner.run(
         f"""
-        UPDATE app.user_profiles
+        UPDATE app.users
            SET is_active = true, deactivated_at = NULL
-         WHERE user_id = '{STANDARD_A}'
+         WHERE id = '{STANDARD_A}'
         """
     )
 
@@ -352,14 +352,14 @@ def _check_files_physical_delete(ctx: Context, report: Report) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Perfiles, áreas y asignaciones
+# Usuarios, áreas y asignaciones
 # ---------------------------------------------------------------------------
 
 
-def _check_user_profiles(ctx: Context, report: Report) -> None:
-    print("\n-- Perfiles visibles por rol --")
+def _check_users(ctx: Context, report: Report) -> None:
+    print("\n-- Usuarios visibles por rol --")
 
-    query = "SELECT user_id FROM app.user_profiles"
+    query = "SELECT id FROM app.users"
     expected = {
         STANDARD_A: {STANDARD_A},
         STANDARD_B: {STANDARD_B},
@@ -369,15 +369,15 @@ def _check_user_profiles(ctx: Context, report: Report) -> None:
     }
 
     for user_id, wanted in expected.items():
-        obtained = column_of(ctx, user_id, query, "user_id")
-        check_set(report, f"{user_id} ve los perfiles esperados", obtained, wanted)
+        obtained = column_of(ctx, user_id, query, "id")
+        check_set(report, f"{user_id} ve los usuarios esperados", obtained, wanted)
 
     report.check(
         update_count(
             ctx,
             HEAD_A,
-            "UPDATE app.user_profiles SET is_active = false, deactivated_at = now() "
-            f"WHERE user_id = '{STANDARD_A}'",
+            "UPDATE app.users SET is_active = false, deactivated_at = now() "
+            f"WHERE id = '{STANDARD_A}'",
         )
         == "0",
         "un jefe de área no desactiva a nadie (0 filas afectadas)",
@@ -386,17 +386,17 @@ def _check_user_profiles(ctx: Context, report: Report) -> None:
         update_count(
             ctx,
             MANAGER,
-            f"UPDATE app.user_profiles SET area_id = '{AREA_A}' WHERE user_id = '{MANAGER}'",
+            f"UPDATE app.users SET area_id = '{AREA_A}' WHERE id = '{MANAGER}'",
         )
         == "0",
-        "un gerente no cambia su propio perfil (0 filas afectadas)",
+        "un gerente no cambia su propia cuenta (0 filas afectadas)",
     )
     report.check(
         update_count(
             ctx,
             ADMIN,
-            "UPDATE app.user_profiles SET is_active = false, deactivated_at = now() "
-            f"WHERE user_id = '{STANDARD_B}'",
+            "UPDATE app.users SET is_active = false, deactivated_at = now() "
+            f"WHERE id = '{STANDARD_B}'",
         )
         == "1",
         "un administrador sí desactiva a otro usuario (1 fila afectada)",

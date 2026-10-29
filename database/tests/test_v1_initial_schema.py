@@ -10,13 +10,15 @@ Ejecución:
 
 from __future__ import annotations
 
+import fixtures
 from common import Context, Report, TestFailure, main
 
 TITLE = "V1 - esquema inicial"
 
 EXPECTED_TABLES = {
     ("app", "areas"),
-    ("app", "user_profiles"),
+    ("app", "users"),
+    ("app", "sessions"),
     ("app", "manager_areas"),
     ("app", "files"),
     ("app", "login_rate_limits"),
@@ -36,10 +38,7 @@ EXPECTED_ENUM_VALUES = {
     "access_denied",
 }
 
-# app_runtime no puede actualizar app.files: V1 concedió UPDATE por columna
-# para el borrado lógico, pero V3 lo retira y encauza la eliminación por
-# app.soft_delete_file. PostgreSQL no admite un UPDATE cuya fila resultante
-# deje de cumplir las políticas de SELECT (los eliminados son invisibles).
+PLAIN_PASSWORD_HASH = "texto-plano"
 
 TEST_FILE_ID = "b0000000-0000-0000-0000-000000000001"
 
@@ -47,7 +46,7 @@ TEST_FILE_ID = "b0000000-0000-0000-0000-000000000001"
 def run(ctx: Context, report: Report) -> None:
     _check_structure(ctx, report)
     _check_privileges(ctx, report)
-    _check_default_deny(ctx, report)
+    _check_no_context(ctx, report)
     _check_audit_immutability(ctx, report)
     _check_constraints(ctx, report)
     _cleanup(ctx)
@@ -72,7 +71,7 @@ def _check_structure(ctx: Context, report: Report) -> None:
         )
     }
     missing = EXPECTED_TABLES - tables
-    report.check(not missing, "existen las seis tablas esperadas", f"faltan {sorted(missing)}")
+    report.check(not missing, "existen las siete tablas esperadas", f"faltan {sorted(missing)}")
 
     rls = {
         (row["nspname"], row["relname"])
@@ -89,7 +88,7 @@ def _check_structure(ctx: Context, report: Report) -> None:
     without_rls = RLS_TABLES - rls
     report.check(
         not without_rls,
-        "RLS habilitado en las seis tablas sensibles",
+        "RLS habilitado en las siete tablas sensibles",
         f"sin RLS: {sorted(without_rls)}",
     )
 
@@ -105,6 +104,11 @@ def _check_structure(ctx: Context, report: Report) -> None:
         f"obtenido {sorted(values)}",
     )
 
+    report.check(
+        ctx.owner.scalar("SELECT count(*) FROM pg_extension WHERE extname = 'pgcrypto'") == "0",
+        "no se necesita pgcrypto: gen_random_uuid() es nativo",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Privilegios de app_runtime
@@ -114,39 +118,34 @@ def _check_structure(ctx: Context, report: Report) -> None:
 def _check_privileges(ctx: Context, report: Report) -> None:
     print("\n-- Privilegios de app_runtime --")
 
-    for table in ("app.files", "app.areas", "app.user_profiles"):
+    for table in ("app.files", "app.areas", "app.users"):
         has_delete = ctx.owner.scalar(
             f"SELECT has_table_privilege('app_runtime', '{table}', 'DELETE')"
         )
+        report.check(has_delete == "f", f"app_runtime no tiene DELETE sobre {table}")
+
+    for table, privilege in (
+        ("audit.action_logs", "INSERT"),
+        ("app.files", "UPDATE"),
+    ):
+        granted = ctx.owner.scalar(
+            f"SELECT has_table_privilege('app_runtime', '{table}', '{privilege}')"
+        )
         report.check(
-            has_delete == "f",
-            f"app_runtime no tiene DELETE sobre {table}",
+            granted == "f",
+            f"app_runtime no tiene {privilege} sobre {table}",
         )
 
-    has_insert_audit = ctx.owner.scalar(
-        "SELECT has_table_privilege('app_runtime', 'audit.action_logs', 'INSERT')"
+    session_privileges = ctx.owner.scalar(
+        """
+        SELECT count(*) FROM information_schema.table_privileges
+         WHERE grantee = 'app_runtime' AND table_schema = 'app' AND table_name = 'sessions'
+        """
     )
     report.check(
-        has_insert_audit == "f",
-        "app_runtime no tiene INSERT sobre el historial",
-    )
-
-    updatable = {
-        row["column_name"]
-        for row in ctx.owner.query(
-            """
-            SELECT column_name
-              FROM information_schema.column_privileges
-             WHERE grantee = 'app_runtime'
-               AND privilege_type = 'UPDATE'
-               AND table_schema = 'app' AND table_name = 'files'
-            """
-        )
-    }
-    report.check(
-        not updatable,
-        "app_runtime no puede actualizar app.files directamente",
-        f"columnas con UPDATE: {sorted(updatable)}",
+        session_privileges == "0",
+        "app_runtime no tiene ningún privilegio sobre app.sessions",
+        f"privilegios: {session_privileges}",
     )
 
     # Comprobación de comportamiento, no solo de catálogo. El chequeo de
@@ -155,7 +154,7 @@ def _check_privileges(ctx: Context, report: Report) -> None:
     report.check_fails(
         ctx.app,
         f"UPDATE app.files SET original_name = 'otro.pdf' WHERE id = '{TEST_FILE_ID}'",
-        "app_runtime no puede modificar el nombre de un archivo",
+        "app_runtime no puede modificar un archivo con UPDATE",
         containing="permission denied",
     )
     report.check_fails(
@@ -171,6 +170,12 @@ def _check_privileges(ctx: Context, report: Report) -> None:
         "app_runtime no puede escribir directo en el historial",
         containing="permission denied",
     )
+    report.check_fails(
+        ctx.app,
+        "SELECT count(*) FROM app.sessions",
+        "app_runtime no puede consultar las sesiones con SQL directo",
+        containing="permission denied",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +183,7 @@ def _check_privileges(ctx: Context, report: Report) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _check_default_deny(ctx: Context, report: Report) -> None:
+def _check_no_context(ctx: Context, report: Report) -> None:
     print("\n-- Sin contexto de usuario --")
 
     # Se siembra una fila como propietario para que el conteo sea significativo:
@@ -310,9 +315,27 @@ def _check_constraints(ctx: Context, report: Report) -> None:
 
     report.check_fails(
         ctx.migrator,
-        "INSERT INTO app.user_profiles (user_id, role) VALUES ('sin-perfil', 'area_head')",
+        "INSERT INTO app.users (email, password_hash, name, role) "
+        "VALUES ('jefe@example.com', "
+        f"'{fixtures.PASSWORD_HASH}', 'Jefe', 'area_head')",
         "se rechaza un jefe de área sin área asignada",
-        containing="user_profiles_role_area_ck",
+        containing="users_role_area_ck",
+    )
+
+    report.check_fails(
+        ctx.migrator,
+        "INSERT INTO app.users (email, password_hash, name, role) "
+        f"VALUES ('x@example.com', '{PLAIN_PASSWORD_HASH}', 'X', 'admin')",
+        "se rechaza una contraseña que no sea un hash bcrypt",
+        containing="users_password_hash_mcf_ck",
+    )
+
+    report.check_fails(
+        ctx.migrator,
+        "INSERT INTO app.users (email, password_hash, name, role) "
+        f"VALUES ('   ', '{fixtures.PASSWORD_HASH}', 'X', 'admin')",
+        "se rechaza un correo en blanco",
+        containing="users_email_not_blank",
     )
 
     report.check_fails(

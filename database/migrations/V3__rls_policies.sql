@@ -1,6 +1,6 @@
 -- V3: políticas de seguridad a nivel de fila (RLS).
 --
--- V1 habilitó RLS con denegación por defecto en las seis tablas sensibles.
+-- V1 habilitó RLS con denegación por defecto en las tablas sensibles.
 -- Esta migración añade las políticas que determinan qué filas puede ver o
 -- modificar cada usuario.
 --
@@ -14,6 +14,11 @@
 --   - Cualquier rol nuevo queda denegado por defecto hasta que se le conceda
 --     una política de forma explícita.
 --
+-- Nota sobre app.sessions: no tiene políticas a propósito. La búsqueda del
+-- token ocurre antes de conocer al usuario, así que el acceso pasa siempre por
+-- las funciones controladas de V2. No se añade ninguna política para que
+-- app_runtime no pueda consultarla con SQL directo.
+--
 -- Nota sobre cómo deniegan las políticas: INSERT viola su WITH CHECK y lanza
 -- un error, pero UPDATE y DELETE simplemente no encuentran filas. Es decir,
 -- deniegan en silencio con cero filas afectadas. Por eso la API debe comprobar
@@ -24,10 +29,11 @@
 -- que la fila resultante de un UPDATE siga cumpliendo las políticas de SELECT,
 -- y como los archivos eliminados son invisibles para todos, un UPDATE que
 -- establezca deleted_at sería rechazado siempre. La eliminación se encapsula
--- en app.soft_delete_file y se retira el privilegio de UPDATE a app_runtime.
+-- en app.soft_delete_file, y V1 no concede privilegio de UPDATE sobre
+-- app.files para que no exista ninguna otra vía.
 --
 -- Nota de rendimiento: las políticas evalúan funciones que consultan
--- app.user_profiles, app.areas y app.manager_areas. Es un coste aceptable para
+-- app.users, app.areas y app.manager_areas. Es un coste aceptable para
 -- el tamaño de este proyecto. Si el volumen creciera, el siguiente paso sería
 -- resolver el alcance del usuario una sola vez por transacción y cachearlo.
 
@@ -65,18 +71,18 @@ COMMENT ON POLICY areas_update ON app.areas IS
 
 
 -- ---------------------------------------------------------------------------
--- app.user_profiles
+-- app.users
 -- ---------------------------------------------------------------------------
--- Lectura: el administrador todo; cada usuario su propio perfil; el gerente los
--- perfiles de sus áreas; el jefe de área los usuarios estándar de su área.
+-- Lectura: el administrador todo; cada usuario su propia cuenta; el gerente las
+-- cuentas de sus áreas; el jefe de área los usuarios estándar de su área.
 -- Escritura: solo el administrador. La protección del propio administrador la
 -- aplica el trigger creado en V2.
 
-CREATE POLICY user_profiles_select ON app.user_profiles
+CREATE POLICY users_select ON app.users
   FOR SELECT TO app_runtime
   USING (
     app.is_admin()
-    OR user_id = app.current_user_id()
+    OR id = app.current_user_id()
     OR app.is_manager_of(area_id)
     OR (
       app.current_user_role() = 'area_head'
@@ -85,21 +91,21 @@ CREATE POLICY user_profiles_select ON app.user_profiles
     )
   );
 
-CREATE POLICY user_profiles_insert ON app.user_profiles
+CREATE POLICY users_insert ON app.users
   FOR INSERT TO app_runtime
   WITH CHECK (app.is_admin());
 
-CREATE POLICY user_profiles_update ON app.user_profiles
+CREATE POLICY users_update ON app.users
   FOR UPDATE TO app_runtime
   USING (app.is_admin())
   WITH CHECK (app.is_admin());
 
-COMMENT ON POLICY user_profiles_select ON app.user_profiles IS
+COMMENT ON POLICY users_select ON app.users IS
   'Admin: todos. Usuario: el propio. Gerente: los de sus áreas. Jefe de área: los estándar de su área.';
-COMMENT ON POLICY user_profiles_insert ON app.user_profiles IS
-  'Solo el administrador crea perfiles.';
-COMMENT ON POLICY user_profiles_update ON app.user_profiles IS
-  'Solo el administrador edita perfiles. La API no puede desactivar ni cambiar el rol del propio administrador.';
+COMMENT ON POLICY users_insert ON app.users IS
+  'Solo el administrador crea usuarios.';
+COMMENT ON POLICY users_update ON app.users IS
+  'Solo el administrador edita usuarios. La API no puede desactivar ni cambiar el rol del propio administrador.';
 
 
 -- ---------------------------------------------------------------------------
@@ -168,11 +174,8 @@ COMMENT ON POLICY files_insert ON app.files IS
 --
 -- Para no renunciar a que un archivo eliminado sea invisible para todos, la
 -- eliminación se encapsula en una función SECURITY DEFINER que reutiliza la
--- autorización de V2. Además se retira el privilegio de UPDATE, de modo que la
--- API no pueda modificar la tabla por ninguna otra vía.
-
-REVOKE UPDATE (deleted_at, deleted_by_id, deleted_by_email)
-  ON app.files FROM app_runtime;
+-- autorización de V2. V1 ya no concede privilegio de UPDATE sobre app.files,
+-- así que no existe ninguna otra vía para modificar la tabla.
 
 CREATE OR REPLACE FUNCTION app.soft_delete_file(
   p_file_id     uuid,
@@ -184,7 +187,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 DECLARE
-  v_actor text := app.current_user_id();
+  v_actor uuid := app.current_user_id();
 BEGIN
   IF v_actor IS NULL THEN
     RAISE EXCEPTION 'No hay usuario en el contexto de la transacción'

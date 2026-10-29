@@ -1,14 +1,14 @@
 -- V1: esquemas, tipos y tablas base.
 --
--- Esta migración crea el modelo de datos del proyecto.
+-- Esta migración crea el modelo de datos del proyecto, incluida la identidad.
+-- La autenticación es propia: usuarios, credenciales y sesiones viven en el
+-- esquema app y no dependen de ningún servicio externo.
 --
 -- Requisitos previos:
 --   - El ambiente debe haber sido aprovisionado con
 --     database/provision_environment.py, que crea los roles app_migrator y
---     app_runtime y otorga a app_migrator los privilegios necesarios sobre
---     neon_auth. La creación y configuración de roles NO es tarea de Flyway.
---   - Neon Auth habilitado; debe existir el esquema neon_auth.
---   - Flyway conectado como app_migrator.
+--     app_runtime. La creación y configuración de roles NO es tarea de Flyway.
+--   - Flyway conectado como app_migrator, con permiso de creación sobre la base.
 --
 -- Resultado de esta migración:
 --   - Esquemas, tipos, tablas, restricciones y triggers de integridad.
@@ -20,33 +20,14 @@
 
 
 -- ---------------------------------------------------------------------------
--- Validación previa
+-- Esquemas
 -- ---------------------------------------------------------------------------
--- Comprueba que Neon Auth ya exista para no fallar de forma poco clara al
--- crear las claves foráneas. La consulta al catálogo no requiere privilegios
--- sobre neon_auth.
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'neon_auth'
-       AND c.relname = 'user'
-  ) THEN
-    RAISE EXCEPTION
-      'No existe neon_auth."user". Habilita Neon Auth antes de migrar.';
-  END IF;
-END;
-$$;
-
 
 CREATE SCHEMA IF NOT EXISTS app;
 CREATE SCHEMA IF NOT EXISTS audit;
 
 COMMENT ON SCHEMA app IS
-  'Datos de negocio: perfiles, áreas, archivos y control de intentos de acceso.';
+  'Datos de negocio: usuarios, sesiones, áreas, archivos y control de intentos de acceso.';
 
 COMMENT ON SCHEMA audit IS
   'Historial append-only de acciones de la aplicación.';
@@ -104,11 +85,16 @@ COMMENT ON COLUMN app.areas.is_active IS
 
 
 -- ---------------------------------------------------------------------------
--- Perfiles de aplicación
+-- Usuarios
 -- ---------------------------------------------------------------------------
+-- Contiene identidad y autorización: no hay un servicio de autenticación
+-- externo del que obtener el correo o el nombre.
 
-CREATE TABLE app.user_profiles (
-  user_id text PRIMARY KEY,
+CREATE TABLE app.users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  password_hash text NOT NULL,
+  name text NOT NULL,
   role app.app_role NOT NULL,
   area_id uuid,
   is_active boolean NOT NULL DEFAULT true,
@@ -116,42 +102,97 @@ CREATE TABLE app.user_profiles (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
 
-  CONSTRAINT user_profiles_user_fk
-    FOREIGN KEY (user_id)
-    REFERENCES neon_auth."user" (id)
-    ON DELETE CASCADE,
-
-  CONSTRAINT user_profiles_area_fk
+  CONSTRAINT users_area_fk
     FOREIGN KEY (area_id)
     REFERENCES app.areas (id)
     ON DELETE RESTRICT,
 
-  CONSTRAINT user_profiles_role_area_ck
+  CONSTRAINT users_role_area_ck
     CHECK (
       (role IN ('standard', 'area_head') AND area_id IS NOT NULL)
       OR
       (role IN ('manager', 'admin') AND area_id IS NULL)
     ),
 
-  CONSTRAINT user_profiles_active_ck
+  CONSTRAINT users_active_ck
     CHECK (
       (is_active AND deactivated_at IS NULL)
       OR
       (NOT is_active AND deactivated_at IS NOT NULL)
-    )
+    ),
+
+  CONSTRAINT users_email_not_blank
+    CHECK (btrim(email) <> ''),
+
+  CONSTRAINT users_name_not_blank
+    CHECK (btrim(name) <> ''),
+
+  -- El hash debe tener forma de MCF de bcrypt ($2a$/$2b$/$2y$ + coste + 53
+  -- caracteres). Evita guardar por error una contraseña en claro.
+  CONSTRAINT users_password_hash_mcf_ck
+    CHECK (password_hash ~ '^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$')
 );
 
-COMMENT ON TABLE app.user_profiles IS
-  'Datos de autorización asociados a un usuario de neon_auth.';
+COMMENT ON TABLE app.users IS
+  'Usuarios de la aplicación: identidad, credencial y rol de negocio.';
 
-COMMENT ON COLUMN app.user_profiles.user_id IS
-  'Identificador de neon_auth."user".id, almacenado como texto.';
+COMMENT ON COLUMN app.users.email IS
+  'Correo de inicio de sesión. Único sin distinguir mayúsculas (índice en V4).';
 
-COMMENT ON COLUMN app.user_profiles.area_id IS
+COMMENT ON COLUMN app.users.password_hash IS
+  'Hash bcrypt en formato MCF. La contraseña en claro nunca llega a la base de datos.';
+
+COMMENT ON COLUMN app.users.area_id IS
   'Área propia para standard y area_head; NULL para manager y admin.';
 
-COMMENT ON COLUMN app.user_profiles.is_active IS
-  'Barrera de autorización de la aplicación, independiente del ban de Auth.';
+COMMENT ON COLUMN app.users.is_active IS
+  'Barrera de autorización de la aplicación, comprobada en cada petición.';
+
+
+-- ---------------------------------------------------------------------------
+-- Sesiones
+-- ---------------------------------------------------------------------------
+-- La sesión la emite la propia API. En la base solo se guarda el hash del
+-- token, de modo que una lectura indebida de la tabla no permita reutilizar
+-- sesiones.
+
+CREATE TABLE app.sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash text NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  last_seen_at timestamptz,
+  ip_address inet NOT NULL,
+  user_agent text,
+
+  CONSTRAINT sessions_user_fk
+    FOREIGN KEY (user_id)
+    REFERENCES app.users (id)
+    ON DELETE CASCADE,
+
+  CONSTRAINT sessions_token_hash_not_blank
+    CHECK (btrim(token_hash) <> ''),
+
+  CONSTRAINT sessions_token_hash_sha256_ck
+    CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+
+  CONSTRAINT sessions_expires_after_created_ck
+    CHECK (expires_at > created_at),
+
+  CONSTRAINT sessions_revoked_consistent_ck
+    CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+
+COMMENT ON TABLE app.sessions IS
+  'Sesiones emitidas por la API. Sin políticas RLS: se usan mediante funciones controladas.';
+
+COMMENT ON COLUMN app.sessions.token_hash IS
+  'SHA-256 del token, en hexadecimal. El token en claro solo existe en la cookie del cliente.';
+
+COMMENT ON COLUMN app.sessions.last_seen_at IS
+  'Última actividad registrada. Se actualiza como mucho una vez cada pocos minutos.';
 
 
 -- ---------------------------------------------------------------------------
@@ -159,33 +200,30 @@ COMMENT ON COLUMN app.user_profiles.is_active IS
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE app.manager_areas (
-  manager_id text NOT NULL,
+  manager_id uuid NOT NULL,
   area_id uuid NOT NULL,
   assigned_at timestamptz NOT NULL DEFAULT now(),
-  assigned_by text,
+  assigned_by uuid,
 
   CONSTRAINT manager_areas_pk
     PRIMARY KEY (manager_id, area_id),
 
   CONSTRAINT manager_areas_manager_fk
     FOREIGN KEY (manager_id)
-    REFERENCES app.user_profiles (user_id)
+    REFERENCES app.users (id)
     ON DELETE CASCADE,
 
   CONSTRAINT manager_areas_area_fk
     FOREIGN KEY (area_id)
     REFERENCES app.areas (id)
-    ON DELETE RESTRICT,
-
-  CONSTRAINT manager_areas_assigned_by_not_blank
-    CHECK (assigned_by IS NULL OR btrim(assigned_by) <> '')
+    ON DELETE RESTRICT
 );
 
 COMMENT ON TABLE app.manager_areas IS
   'Relación muchos-a-muchos entre gerentes y las áreas que gestionan.';
 
 COMMENT ON COLUMN app.manager_areas.assigned_by IS
-  'Identificador lógico del administrador que realizó la asignación.';
+  'Identificador del administrador que realizó la asignación.';
 
 
 -- ---------------------------------------------------------------------------
@@ -194,7 +232,7 @@ COMMENT ON COLUMN app.manager_areas.assigned_by IS
 
 CREATE TABLE app.files (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id text,
+  owner_id uuid,
   owner_email text NOT NULL,
   area_id uuid,
   storage_key text NOT NULL,
@@ -204,12 +242,12 @@ CREATE TABLE app.files (
   sha256_hex char(64),
   uploaded_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz,
-  deleted_by_id text,
+  deleted_by_id uuid,
   deleted_by_email text,
 
   CONSTRAINT files_owner_fk
     FOREIGN KEY (owner_id)
-    REFERENCES neon_auth."user" (id)
+    REFERENCES app.users (id)
     ON DELETE SET NULL,
 
   CONSTRAINT files_area_fk
@@ -253,7 +291,7 @@ COMMENT ON COLUMN app.files.id IS
   'UUID público y aleatorio del archivo.';
 
 COMMENT ON COLUMN app.files.owner_id IS
-  'Propietario actual; se vuelve NULL si se elimina la cuenta de Auth.';
+  'Propietario actual; se vuelve NULL si se elimina el usuario.';
 
 COMMENT ON COLUMN app.files.owner_email IS
   'Snapshot del correo del propietario al momento de la carga.';
@@ -282,7 +320,7 @@ CREATE TABLE audit.action_logs (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   occurred_at timestamptz NOT NULL DEFAULT now(),
   action audit.audit_action NOT NULL,
-  actor_user_id text,
+  actor_user_id uuid,
   actor_email text,
   actor_role app.app_role,
   actor_area_id uuid,
@@ -313,7 +351,7 @@ COMMENT ON COLUMN audit.action_logs.file_id IS
   'ID histórico del archivo; no tiene FK para sobrevivir a su eliminación.';
 
 COMMENT ON COLUMN audit.action_logs.metadata IS
-  'Datos mínimos de contexto; nunca contiene secretos, tokens ni contenido de archivos.';
+  'Datos mínimos de contexto; nunca contiene contraseñas, hashes, tokens ni contenido de archivos.';
 
 
 -- ---------------------------------------------------------------------------
@@ -364,8 +402,8 @@ BEFORE UPDATE ON app.areas
 FOR EACH ROW
 EXECUTE FUNCTION app.set_updated_at();
 
-CREATE TRIGGER user_profiles_set_updated_at
-BEFORE UPDATE ON app.user_profiles
+CREATE TRIGGER users_set_updated_at
+BEFORE UPDATE ON app.users
 FOR EACH ROW
 EXECUTE FUNCTION app.set_updated_at();
 
@@ -411,7 +449,8 @@ EXECUTE FUNCTION audit.reject_mutation();
 -- se conecta con ese rol. Se reevaluará al definir la estrategia de seeds.
 
 ALTER TABLE app.areas             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app.user_profiles     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.users             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.sessions          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.manager_areas     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.files             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.login_rate_limits ENABLE ROW LEVEL SECURITY;
@@ -420,11 +459,12 @@ ALTER TABLE audit.action_logs     ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------------
 -- Privilegios de app_runtime sobre app y audit
--- NOTA: la creación y configuración de roles pertenece a
--- database/provision_environment.py; aquí solo se otorgan privilegios
--- sobre los esquemas que esta migración crea.
 -- ---------------------------------------------------------------------------
--- Se otorga lo mínimo necesario. Los INSERT/UPDATE/SELECT quedan además
+-- La creación de los roles y sus contraseñas pertenece a
+-- database/provision_environment.py. Aquí solo se otorgan privilegios sobre
+-- los esquemas que esta migración crea.
+--
+-- Se otorga lo mínimo necesario. Los SELECT/INSERT/UPDATE quedan además
 -- acotados a las filas permitidas por las políticas RLS de V3.
 -- No se conceden privilegios de DDL, ni DELETE sobre archivos o áreas.
 
@@ -434,17 +474,20 @@ GRANT USAGE ON SCHEMA audit TO app_runtime;
 -- Áreas: lectura, alta y edición. Sin borrado físico.
 GRANT SELECT, INSERT, UPDATE ON app.areas TO app_runtime;
 
--- Perfiles: lectura, alta y edición. Sin borrado físico.
-GRANT SELECT, INSERT, UPDATE ON app.user_profiles TO app_runtime;
+-- Usuarios: lectura, alta y edición. Sin borrado físico.
+GRANT SELECT, INSERT, UPDATE ON app.users TO app_runtime;
+
+-- Sesiones: ningún privilegio. La API solo las usa a través de las funciones
+-- de V2, porque la búsqueda del token ocurre antes de conocer al usuario.
 
 -- Áreas gestionadas: se asignan y se retiran, por lo que se permite DELETE.
 GRANT SELECT, INSERT, DELETE ON app.manager_areas TO app_runtime;
 
--- Archivos: el alta usa todas las columnas, pero la edición se limita
--- exclusivamente a los campos de eliminación lógica.
+-- Archivos: el alta usa todas las columnas. No se concede UPDATE: la
+-- eliminación lógica pasa por app.soft_delete_file (V3), porque PostgreSQL
+-- exige que la fila resultante de un UPDATE siga cumpliendo las políticas de
+-- SELECT y los archivos eliminados son invisibles para todos.
 GRANT SELECT, INSERT ON app.files TO app_runtime;
-GRANT UPDATE (deleted_at, deleted_by_id, deleted_by_email)
-  ON app.files TO app_runtime;
 
 -- Historial: solo lectura desde la API. La inserción se hará mediante la
 -- función controlada audit.append_event (V2), nunca con INSERT directo.
@@ -456,4 +499,3 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON app.login_rate_limits TO app_runtime;
 -- Las funciones de trigger no deben ser ejecutables por otros roles.
 REVOKE ALL ON FUNCTION app.set_updated_at() FROM PUBLIC;
 REVOKE ALL ON FUNCTION audit.reject_mutation() FROM PUBLIC;
-

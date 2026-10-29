@@ -1,8 +1,8 @@
-"""Pruebas de la migración V2 (funciones de autorización y historial).
+"""Pruebas de la migración V2 (autorización, identidad y sesiones).
 
 Siembra datos ficticios (dos áreas, un usuario por rol y un segundo estándar en
-otra área) y comprueba la matriz de permisos, el registro controlado del
-historial y las guardas del administrador.
+otra área) y comprueba la matriz de permisos, el ciclo de vida de la sesión, el
+registro controlado del historial y las guardas del administrador.
 
 Ejecución:
     python3 tests/test_v2_authorization_functions.py --container <nombre>
@@ -24,12 +24,19 @@ HEAD_A = fixtures.HEAD_A
 MANAGER = fixtures.MANAGER
 ADMIN = fixtures.ADMIN
 
+EMAIL_STANDARD_A = fixtures.EMAIL_STANDARD_A
+EMAIL_ADMIN = fixtures.EMAIL_ADMIN
+
 F_STANDARD_A = fixtures.F_STANDARD_A
 F_STANDARD_B = fixtures.F_STANDARD_B
 F_HEAD_A = fixtures.F_HEAD_A
 F_MANAGER = fixtures.F_MANAGER
 F_ADMIN = fixtures.F_ADMIN
 F_DELETED = fixtures.F_DELETED
+
+TOKEN_A = "ab" * 32
+TOKEN_B = "cd" * 32
+TOKEN_C = "12" * 32
 
 
 def run(ctx: Context, report: Report) -> None:
@@ -38,6 +45,7 @@ def run(ctx: Context, report: Report) -> None:
 
     _check_scope(ctx, report)
     _check_fail_closed(ctx, report)
+    _check_sessions(ctx, report)
     _check_history_scope(ctx, report)
     _check_append_event(ctx, report)
     _check_atomic_snapshots(ctx, report)
@@ -53,9 +61,9 @@ def run(ctx: Context, report: Report) -> None:
 def scope(ctx: Context, user_id: str, expressions: dict) -> dict:
     """Evalúa varias expresiones booleanas con el usuario indicado.
 
-    El contexto de V2 es local a la transacción, así que todo se ejecuta dentro
-    de una única transacción. SET LOCAL no produce salida, por lo que el
-    resultado es un único conjunto de datos con el JSON de las comprobaciones.
+    El contexto es local a la transacción, así que todo se ejecuta dentro de una
+    única transacción. SET LOCAL no produce salida, por lo que el resultado es un
+    único conjunto de datos con el JSON de las comprobaciones.
     """
     items = ", ".join(f"'{name}', {expr}" for name, expr in expressions.items())
     sql = in_user_context(user_id, f"SELECT jsonb_build_object({items})::text AS resultado")
@@ -91,7 +99,7 @@ def _check_scope(ctx: Context, report: Report) -> None:
         "carga en otra área": f"app.can_upload_for_area('{AREA_B}')",
         "carga sin área": "app.can_upload_for_area(NULL)",
     })
-    check_matrix(report, STANDARD_A, standard_a, {
+    check_matrix(report, "estándar A", standard_a, {
         "lee lo propio": True,
         "elimina lo propio": True,
         "lee otra área": False,
@@ -107,7 +115,7 @@ def _check_scope(ctx: Context, report: Report) -> None:
         "lee lo propio": f"app.can_read_file('{F_STANDARD_B}')",
         "lee el área A": f"app.can_read_file('{F_STANDARD_A}')",
     })
-    check_matrix(report, STANDARD_B, standard_b, {
+    check_matrix(report, "estándar B", standard_b, {
         "lee lo propio": True,
         "lee el área A": False,
     })
@@ -122,7 +130,7 @@ def _check_scope(ctx: Context, report: Report) -> None:
         "lee al administrador": f"app.can_read_file('{F_ADMIN}')",
         "carga en su área": f"app.can_upload_for_area('{AREA_A}')",
     })
-    check_matrix(report, HEAD_A, head_a, {
+    check_matrix(report, "jefe de área", head_a, {
         "lee lo propio": True,
         "lee al estándar de su área": True,
         "elimina lo propio": True,
@@ -145,7 +153,7 @@ def _check_scope(ctx: Context, report: Report) -> None:
         "carga sin área": "app.can_upload_for_area(NULL)",
         "carga en su área gestionada": f"app.can_upload_for_area('{AREA_A}')",
     })
-    check_matrix(report, MANAGER, manager, {
+    check_matrix(report, "gerente", manager, {
         "lee lo propio": True,
         "elimina lo propio": True,
         "lee al estándar de su área": True,
@@ -164,7 +172,7 @@ def _check_scope(ctx: Context, report: Report) -> None:
         "lee un eliminado": f"app.can_read_file('{F_DELETED}')",
         "carga sin área": "app.can_upload_for_area(NULL)",
     })
-    check_matrix(report, ADMIN, admin, {
+    check_matrix(report, "administrador", admin, {
         "lee cualquier archivo": True,
         "elimina cualquier archivo": True,
         "lee un eliminado": False,
@@ -194,6 +202,117 @@ def _check_fail_closed(ctx: Context, report: Report) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Identidad y sesiones
+# ---------------------------------------------------------------------------
+
+
+def _check_sessions(ctx: Context, report: Report) -> None:
+    print("\n-- Identidad y sesiones --")
+
+    # login_lookup funciona antes de que exista contexto y sin distinguir cajas.
+    looked_up = ctx.app.query(
+        f"SELECT id FROM app.login_lookup('{EMAIL_STANDARD_A.upper()}')"
+    )
+    report.check(
+        len(looked_up) == 1 and looked_up[0]["id"] == STANDARD_A,
+        "login_lookup resuelve el correo sin distinguir mayúsculas",
+        f"obtenido {looked_up}",
+    )
+    report.check(
+        len(ctx.app.query("SELECT id FROM app.login_lookup('no-existe@example.com')")) == 0,
+        "login_lookup no inventa usuarios",
+    )
+
+    # Ciclo de vida de la sesión.
+    report.check(
+        ctx.app.scalar(
+            f"SELECT app.create_session('{STANDARD_A}'::uuid, '{TOKEN_A}', "
+            "'203.0.113.7'::inet, 'prueba/1.0', interval '1 hour') IS NOT NULL"
+        )
+        == "t",
+        "se crea una sesión",
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.validate_session('{TOKEN_A}')") == STANDARD_A,
+        "la sesión recién creada es válida",
+    )
+    report.check(
+        ctx.app.scalar("SELECT app.validate_session('" + "ff" * 32 + "') IS NULL") == "t",
+        "un token desconocido no vale",
+    )
+
+    # El hash debe tener forma de SHA-256.
+    report.check_fails(
+        ctx.app,
+        f"SELECT app.create_session('{STANDARD_A}'::uuid, 'no-es-un-hash', "
+        "'203.0.113.7'::inet, 'x', interval '1 hour')",
+        "se rechaza un token que no sea un hash SHA-256",
+        containing="sessions_token_hash_sha256_ck",
+    )
+
+    report.check(
+        ctx.app.scalar(f"SELECT app.validate_session('{TOKEN_A}') IS NOT NULL") == "t",
+        "la sesión sigue siendo válida",
+    )
+
+    # Sesiones caducadas y revocadas.
+    ctx.migrator.run(
+        f"""
+        INSERT INTO app.sessions (token_hash, user_id, created_at, expires_at, ip_address)
+        VALUES ('{"ee" * 32}', '{STANDARD_A}', now() - interval '2 hours',
+                now() - interval '1 hour', '127.0.0.1')
+        """
+    )
+    report.check(
+        ctx.app.scalar("SELECT app.validate_session('" + "ee" * 32 + "') IS NULL") == "t",
+        "una sesión expirada no vale",
+    )
+
+    report.check(
+        ctx.app.scalar(f"SELECT app.revoke_session('{TOKEN_A}')") == "t",
+        "se revoca la sesión",
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.validate_session('{TOKEN_A}') IS NULL") == "t",
+        "una sesión revocada no vale",
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.revoke_session('{TOKEN_A}')") == "f",
+        "revocar dos veces no cuenta como éxito",
+    )
+
+    # Listar y revocar en bloque.
+    ctx.app.run(
+        f"SELECT app.create_session('{STANDARD_A}'::uuid, '{TOKEN_B}', "
+        "'203.0.113.8'::inet, 'prueba/2.0', interval '1 hour')"
+    )
+
+    own = scope(ctx, STANDARD_A, {
+        "ve sus sesiones": f"(SELECT count(*) FROM app.list_sessions('{STANDARD_A}'::uuid)) > 0"
+    })
+    report.check(own["ve sus sesiones"], "lista sus propias sesiones")
+
+    foreign = scope(ctx, STANDARD_B, {
+        "ve las de otro": f"(SELECT count(*) FROM app.list_sessions('{STANDARD_A}'::uuid)) > 0"
+    })
+    report.check(not foreign["ve las de otro"], "no lista las sesiones de otro usuario")
+
+    admin_view = scope(ctx, ADMIN, {
+        "ve las de todos": f"(SELECT count(*) FROM app.list_sessions('{STANDARD_A}'::uuid)) > 0"
+    })
+    report.check(admin_view["ve las de todos"], "un administrador sí las lista")
+
+    report.check(
+        ctx.app.scalar(f"SELECT app.revoke_user_sessions('{STANDARD_A}'::uuid) > 0") == "t",
+        "se revocan todas las sesiones de un usuario",
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.validate_session('{TOKEN_B}') IS NULL") == "t",
+        "tras revocarlas en bloque, ninguna vale",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Historial
 # ---------------------------------------------------------------------------
 
@@ -216,11 +335,11 @@ def _check_history_scope(ctx: Context, report: Report) -> None:
         )
 
     manager = scope(ctx, MANAGER, {
-        "ve su propio historial": "app.can_view_history('u-manager', NULL)",
+        "ve su propio historial": f"app.can_view_history('{MANAGER}', NULL)",
         "ve su área gestionada": f"app.can_view_history('{STANDARD_A}', '{AREA_A}')",
         "ve otra área": f"app.can_view_history('{STANDARD_B}', '{AREA_B}')",
     })
-    check_matrix(report, MANAGER, manager, {
+    check_matrix(report, "gerente", manager, {
         "ve su propio historial": True,
         "ve su área gestionada": True,
         "ve otra área": False,
@@ -232,14 +351,14 @@ def _check_append_event(ctx: Context, report: Report) -> None:
 
     report.check_succeeds(
         ctx.app,
-        """
+        f"""
         BEGIN;
-        SELECT app.set_context('u-standard-a', 'req-v2-1', '203.0.113.15');
+        SELECT app.set_context('{STANDARD_A}'::uuid, 'req-v2-1', '203.0.113.15'::inet);
         SELECT audit.append_event(
           'file_downloaded',
-          p_actor_user_id => 'u-standard-a',
-          p_actor_email   => 'standard.a@example.com',
-          p_file_id       => 'a0000000-0000-0000-0000-000000000001',
+          p_actor_user_id => '{STANDARD_A}'::uuid,
+          p_actor_email   => '{EMAIL_STANDARD_A}',
+          p_file_id       => '{F_STANDARD_A}'::uuid,
           p_file_name     => 'sa.pdf');
         COMMIT;
         """,
@@ -250,7 +369,7 @@ def _check_append_event(ctx: Context, report: Report) -> None:
         ctx.app,
         """
         BEGIN;
-        SELECT app.set_context(NULL, 'req-v2-2', '203.0.113.16');
+        SELECT app.set_context(NULL, 'req-v2-2', '203.0.113.16'::inet);
         SELECT audit.append_event(
           'login_failed',
           p_actor_email => 'desconocido@example.com',
@@ -262,10 +381,10 @@ def _check_append_event(ctx: Context, report: Report) -> None:
 
     report.check_fails(
         ctx.app,
-        """
+        f"""
         BEGIN;
-        SELECT app.set_context('u-standard-a', 'req-v2-3', '203.0.113.17');
-        SELECT audit.append_event('file_deleted', p_actor_user_id => 'u-standard-a');
+        SELECT app.set_context('{STANDARD_A}'::uuid, 'req-v2-3', '203.0.113.17'::inet);
+        SELECT audit.append_event('file_deleted', p_actor_user_id => '{STANDARD_A}'::uuid);
         COMMIT;
         """,
         "se exige p_file_id en las acciones sobre archivos",
@@ -274,9 +393,9 @@ def _check_append_event(ctx: Context, report: Report) -> None:
 
     report.check_fails(
         ctx.app,
-        """
+        f"""
         BEGIN;
-        SELECT app.set_context('u-standard-a', 'req-v2-4', '203.0.113.18');
+        SELECT app.set_context('{STANDARD_A}'::uuid, 'req-v2-4', '203.0.113.18'::inet);
         SELECT audit.append_event('logout', p_metadata => '[1,2]'::jsonb);
         COMMIT;
         """,
@@ -309,9 +428,7 @@ def _check_atomic_snapshots(ctx: Context, report: Report) -> None:
     if download is None:
         raise TestFailure("no se encontró el registro de descarga")
 
-    report.check(
-        download["actor_user_id"] == STANDARD_A, "el registro guarda el usuario"
-    )
+    report.check(download["actor_user_id"] == STANDARD_A, "el registro guarda el usuario")
     report.check(
         download["actor_role"] == "standard",
         "el registro deriva el rol del usuario desde la base de datos",
@@ -350,10 +467,10 @@ def _check_admin_guard(ctx: Context, report: Report) -> None:
 
     report.check_fails(
         ctx.migrator,
-        """
+        f"""
         BEGIN;
-        SET LOCAL app.user_id = 'u-admin';
-        UPDATE app.user_profiles SET role = 'manager' WHERE user_id = 'u-admin';
+        SET LOCAL app.user_id = '{ADMIN}';
+        UPDATE app.users SET role = 'manager' WHERE id = '{ADMIN}';
         ROLLBACK;
         """,
         "un administrador no puede cambiar su propio rol",
@@ -362,11 +479,11 @@ def _check_admin_guard(ctx: Context, report: Report) -> None:
 
     report.check_fails(
         ctx.migrator,
-        """
+        f"""
         BEGIN;
-        SET LOCAL app.user_id = 'u-admin';
-        UPDATE app.user_profiles SET is_active = false, deactivated_at = now()
-         WHERE user_id = 'u-admin';
+        SET LOCAL app.user_id = '{ADMIN}';
+        UPDATE app.users SET is_active = false, deactivated_at = now()
+         WHERE id = '{ADMIN}';
         ROLLBACK;
         """,
         "un administrador no puede desactivarse a sí mismo",
@@ -375,11 +492,11 @@ def _check_admin_guard(ctx: Context, report: Report) -> None:
 
     report.check_succeeds(
         ctx.migrator,
-        """
+        f"""
         BEGIN;
-        SET LOCAL app.user_id = 'u-admin';
-        UPDATE app.user_profiles SET is_active = false, deactivated_at = now()
-         WHERE user_id = 'u-standard-b';
+        SET LOCAL app.user_id = '{ADMIN}';
+        UPDATE app.users SET is_active = false, deactivated_at = now()
+         WHERE id = '{STANDARD_B}';
         ROLLBACK;
         """,
         "un administrador sí puede modificar a otros usuarios",
@@ -391,9 +508,9 @@ def _check_deactivation(ctx: Context, report: Report) -> None:
 
     ctx.owner.run(
         f"""
-        UPDATE app.user_profiles
+        UPDATE app.users
            SET is_active = false, deactivated_at = now()
-         WHERE user_id = '{STANDARD_B}'
+         WHERE id = '{STANDARD_B}'
         """
     )
 
@@ -406,12 +523,40 @@ def _check_deactivation(ctx: Context, report: Report) -> None:
         "lee lo propio": False,
     })
 
-    # Se restaura para dejar los datos de prueba en su estado inicial.
+    # Una sesión abierta deja de valer en cuanto se desactiva al usuario.
+    ctx.app.run(
+        f"SELECT app.create_session('{STANDARD_A}'::uuid, '{TOKEN_C}', "
+        "'203.0.113.9'::inet, 'prueba/3.0', interval '1 hour')"
+    )
     ctx.owner.run(
         f"""
-        UPDATE app.user_profiles
+        UPDATE app.users
+           SET is_active = false, deactivated_at = now()
+         WHERE id = '{STANDARD_A}'
+        """
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.validate_session('{TOKEN_C}') IS NULL") == "t",
+        "desactivar al usuario invalida su sesión abierta",
+    )
+    report.check_fails(
+        ctx.app,
+        f"SELECT app.create_session('{STANDARD_A}'::uuid, '{TOKEN_A}', "
+        "'203.0.113.9'::inet, 'x', interval '1 hour')",
+        "un usuario desactivado no puede iniciar sesión",
+        containing="desactivado",
+    )
+    report.check(
+        ctx.app.scalar(f"SELECT app.revoke_user_sessions('{STANDARD_A}'::uuid) >= 0") == "t",
+        "se pueden revocar todas sus sesiones",
+    )
+
+    # Se restaura el estado para dejar los datos de prueba coherentes.
+    ctx.owner.run(
+        f"""
+        UPDATE app.users
            SET is_active = true, deactivated_at = NULL
-         WHERE user_id = '{STANDARD_B}'
+         WHERE id IN ('{STANDARD_A}', '{STANDARD_B}')
         """
     )
 

@@ -1,27 +1,28 @@
--- V2: funciones de autorización y registro del historial.
+-- V2: funciones de autorización, identidad y sesiones.
 --
--- Esta migración centraliza las reglas de permisos en funciones de la base de
--- datos, de modo que la API y las políticas RLS de V3 compartan exactamente la
--- misma lógica. Añadir un rol nuevo o cambiar el alcance de uno existente
--- debería implicar tocar solo este archivo.
+-- Esta migración centraliza en funciones de la base de datos las reglas de
+-- permisos y el ciclo de vida de la sesión, de modo que la API y las políticas
+-- RLS de V3 compartan exactamente la misma lógica.
 --
 -- Contrato con la API:
---   1. Al abrir una transacción, la API llama a app.set_context() con el
---      usuario verificado por Neon Auth, el identificador de petición y la IP.
---   2. Esas funciones leen el contexto de la transacción mediante
---      current_setting(..., true), por lo que el valor desaparece al terminar
---      la transacción. Esto es imprescindible con el pooler de Neon, que
---      reutiliza conexiones entre peticiones.
---   3. El historial se escribe únicamente con audit.append_event(), nunca con
---      INSERT directo. V1 no otorgó privilegios de INSERT sobre la tabla.
+--   1. Para autenticar, la API llama a app.login_lookup() y verifica el hash
+--      con su biblioteca de bcrypt. La contraseña nunca entra en la base.
+--   2. Al iniciar sesión, app.create_session() guarda el hash del token.
+--   3. En cada petición, app.validate_session() resuelve el token y comprueba
+--      que la sesión y el usuario sigan vigentes.
+--   4. Al abrir una transacción de trabajo, la API llama a app.set_context()
+--      con el usuario, el identificador de petición y la IP.
+--   5. El historial se escribe únicamente con audit.append_event().
 --
 -- Decisiones de seguridad:
 --   - Las funciones que consultan tablas son SECURITY DEFINER y pertenecen a
---     app_migrator. Así pueden leer app.user_profiles y app.files sin quedar
---     sujetas a RLS y sin provocar recursión al ser usadas dentro de políticas.
+--     app_migrator. Así pueden leer app.users y app.files sin quedar sujetas a
+--     RLS y sin provocar recursión al ser usadas dentro de políticas.
 --   - Todas fijan search_path para evitar ataques de búsqueda de esquema.
---   - Si no hay contexto o no existe un perfil activo, resuelven a false
+--   - Si no hay contexto o el usuario no está activo, resuelven a false
 --     (fallo cerrado).
+--   - app.sessions no tiene privilegios ni políticas para app_runtime: solo se
+--     toca desde estas funciones.
 
 
 -- ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.set_context(
-  p_user_id    text,
+  p_user_id    uuid,
   p_request_id text,
   p_ip_address inet
 )
@@ -49,22 +50,22 @@ BEGIN
   END IF;
 
   -- p_user_id puede ser NULL: un inicio de sesión fallido no tiene usuario.
-  PERFORM set_config('app.user_id', coalesce(p_user_id, ''), true);
+  PERFORM set_config('app.user_id', coalesce(p_user_id::text, ''), true);
   PERFORM set_config('app.request_id', p_request_id, true);
   PERFORM set_config('app.ip_address', host(p_ip_address), true);
 END;
 $$;
 
-COMMENT ON FUNCTION app.set_context(text, text, inet) IS
+COMMENT ON FUNCTION app.set_context(uuid, text, inet) IS
   'Establece el contexto de la transacción: usuario, petición e IP. Local a la transacción.';
 
 
 CREATE OR REPLACE FUNCTION app.current_user_id()
-RETURNS text
+RETURNS uuid
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT NULLIF(current_setting('app.user_id', true), '')
+  SELECT NULLIF(current_setting('app.user_id', true), '')::uuid
 $$;
 
 COMMENT ON FUNCTION app.current_user_id() IS
@@ -96,7 +97,160 @@ COMMENT ON FUNCTION app.current_ip_address() IS
 
 
 -- ---------------------------------------------------------------------------
--- 2. Datos de autorización del usuario actual
+-- 2. Identidad y sesiones
+-- ---------------------------------------------------------------------------
+-- Estas funciones son la única vía de acceso a app.users para el login y a
+-- app.sessions en general.
+
+CREATE OR REPLACE FUNCTION app.login_lookup(p_email text)
+RETURNS SETOF app.users
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+  SELECT u.*
+    FROM app.users u
+   WHERE lower(u.email) = lower(p_email)
+$$;
+
+COMMENT ON FUNCTION app.login_lookup(text) IS
+  'Resuelve un usuario por correo para el inicio de sesión. Existe porque el login ocurre antes de que haya contexto: sin ella, la política RLS de app.users no devolvería filas.';
+
+
+CREATE OR REPLACE FUNCTION app.create_session(
+  p_user_id    uuid,
+  p_token_hash text,
+  p_ip_address inet,
+  p_user_agent text,
+  p_ttl        interval
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  v_session_id uuid;
+BEGIN
+  IF p_user_id IS NULL OR p_token_hash IS NULL OR p_ip_address IS NULL THEN
+    RAISE EXCEPTION 'p_user_id, p_token_hash y p_ip_address son obligatorios'
+      USING ERRCODE = 'null_value_not_allowed';
+  END IF;
+
+  IF p_ttl IS NULL OR p_ttl <= interval '0' THEN
+    RAISE EXCEPTION 'p_ttl debe ser un intervalo positivo'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- No se crean sesiones para cuentas inexistentes o desactivadas.
+  IF NOT EXISTS (
+    SELECT 1 FROM app.users u WHERE u.id = p_user_id AND u.is_active
+  ) THEN
+    RAISE EXCEPTION 'El usuario no existe o está desactivado'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  INSERT INTO app.sessions (token_hash, user_id, expires_at, ip_address, user_agent)
+  VALUES (p_token_hash, p_user_id, now() + p_ttl, p_ip_address, p_user_agent)
+  RETURNING id INTO v_session_id;
+
+  RETURN v_session_id;
+END;
+$$;
+
+COMMENT ON FUNCTION app.create_session(uuid, text, inet, text, interval) IS
+  'Crea una sesión guardando solo el hash del token. Rechaza usuarios inexistentes o desactivados.';
+
+
+CREATE OR REPLACE FUNCTION app.validate_session(p_token_hash text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  IF p_token_hash IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT s.user_id
+    INTO v_user_id
+    FROM app.sessions s
+   WHERE s.token_hash = p_token_hash
+     AND s.revoked_at IS NULL
+     AND s.expires_at > now();
+
+  IF v_user_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- Un usuario desactivado pierde el acceso de inmediato, aunque su sesión
+  -- siga vigente.
+  IF NOT EXISTS (
+    SELECT 1 FROM app.users u WHERE u.id = v_user_id AND u.is_active
+  ) THEN
+    RETURN NULL;
+  END IF;
+
+  -- Se evita escribir en cada petición: como mucho una vez cada cinco minutos.
+  UPDATE app.sessions
+     SET last_seen_at = now()
+   WHERE token_hash = p_token_hash
+     AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 minutes');
+
+  RETURN v_user_id;
+END;
+$$;
+
+COMMENT ON FUNCTION app.validate_session(text) IS
+  'Devuelve el usuario de una sesión válida, o NULL si no existe, está revocada, expiró o el usuario está desactivado.';
+
+
+CREATE OR REPLACE FUNCTION app.revoke_session(p_token_hash text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+  WITH revoked AS (
+    UPDATE app.sessions
+       SET revoked_at = now()
+     WHERE token_hash = p_token_hash
+       AND revoked_at IS NULL
+    RETURNING 1
+  )
+  SELECT EXISTS (SELECT 1 FROM revoked)
+$$;
+
+COMMENT ON FUNCTION app.revoke_session(text) IS
+  'Cierra una sesión concreta. Devuelve false si no existía o ya estaba revocada.';
+
+
+CREATE OR REPLACE FUNCTION app.revoke_user_sessions(p_user_id uuid)
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+  WITH revoked AS (
+    UPDATE app.sessions
+       SET revoked_at = now()
+     WHERE user_id = p_user_id
+       AND revoked_at IS NULL
+    RETURNING 1
+  )
+  SELECT count(*)::integer FROM revoked
+$$;
+
+COMMENT ON FUNCTION app.revoke_user_sessions(uuid) IS
+  'Revoca todas las sesiones de un usuario. Se usa al desactivarlo o al cambiar su contraseña.';
+
+
+-- ---------------------------------------------------------------------------
+-- 3. Datos de autorización del usuario actual
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.current_user_role()
@@ -106,13 +260,13 @@ STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
-  SELECT p.role
-    FROM app.user_profiles p
-   WHERE p.user_id = app.current_user_id()
+  SELECT u.role
+    FROM app.users u
+   WHERE u.id = app.current_user_id()
 $$;
 
 COMMENT ON FUNCTION app.current_user_role() IS
-  'Rol de negocio del usuario actual, o NULL si no tiene perfil.';
+  'Rol de negocio del usuario actual, o NULL si no existe.';
 
 
 CREATE OR REPLACE FUNCTION app.current_user_area_id()
@@ -122,9 +276,9 @@ STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
-  SELECT p.area_id
-    FROM app.user_profiles p
-   WHERE p.user_id = app.current_user_id()
+  SELECT u.area_id
+    FROM app.users u
+   WHERE u.id = app.current_user_id()
 $$;
 
 COMMENT ON FUNCTION app.current_user_area_id() IS
@@ -139,14 +293,14 @@ SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
   SELECT coalesce((
-    SELECT p.is_active
-      FROM app.user_profiles p
-     WHERE p.user_id = app.current_user_id()
+    SELECT u.is_active
+      FROM app.users u
+     WHERE u.id = app.current_user_id()
   ), false)
 $$;
 
 COMMENT ON FUNCTION app.current_user_is_active() IS
-  'True solo si hay contexto y el perfil del usuario existe y está activo.';
+  'True solo si hay contexto y el usuario existe y está activo.';
 
 
 CREATE OR REPLACE FUNCTION app.is_admin()
@@ -186,15 +340,42 @@ COMMENT ON FUNCTION app.is_manager_of(uuid) IS
   'True solo si el usuario actual tiene rol manager y el área indicada está entre las que gestiona.';
 
 
+CREATE OR REPLACE FUNCTION app.list_sessions(p_user_id uuid)
+RETURNS TABLE (
+  id uuid,
+  created_at timestamptz,
+  expires_at timestamptz,
+  last_seen_at timestamptz,
+  ip_address inet,
+  user_agent text
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+  SELECT s.id, s.created_at, s.expires_at, s.last_seen_at, s.ip_address, s.user_agent
+    FROM app.sessions s
+   WHERE s.user_id = p_user_id
+     AND s.revoked_at IS NULL
+     AND s.expires_at > now()
+     AND (p_user_id = app.current_user_id() OR app.is_admin())
+   ORDER BY s.created_at DESC
+$$;
+
+COMMENT ON FUNCTION app.list_sessions(uuid) IS
+  'Sesiones activas de un usuario. Solo el propio usuario o un administrador.';
+
+
 -- ---------------------------------------------------------------------------
--- 3. Alcance sobre archivos
+-- 4. Alcance sobre archivos
 -- ---------------------------------------------------------------------------
 -- Las funciones *_row reciben las columnas relevantes para poder usarse en
 -- políticas RLS sin volver a consultar app.files. Las funciones *_file
 -- resuelven el archivo por su identificador y son las que utiliza la API.
 
 CREATE OR REPLACE FUNCTION app.can_read_file_row(
-  p_owner_id   text,
+  p_owner_id   uuid,
   p_area_id    uuid,
   p_deleted_at timestamptz
 )
@@ -230,8 +411,8 @@ AS $$
         AND p_area_id = app.current_user_area_id()
         AND EXISTS (
           SELECT 1
-            FROM app.user_profiles o
-           WHERE o.user_id = p_owner_id
+            FROM app.users o
+           WHERE o.id = p_owner_id
              AND o.role = 'standard'
              AND o.area_id = app.current_user_area_id()
         )
@@ -239,12 +420,12 @@ AS $$
     )
 $$;
 
-COMMENT ON FUNCTION app.can_read_file_row(text, uuid, timestamptz) IS
+COMMENT ON FUNCTION app.can_read_file_row(uuid, uuid, timestamptz) IS
   'Alcance de lectura/descarga para los valores de una fila de app.files.';
 
 
 CREATE OR REPLACE FUNCTION app.can_delete_file_row(
-  p_owner_id   text,
+  p_owner_id   uuid,
   p_area_id    uuid,
   p_deleted_at timestamptz
 )
@@ -272,7 +453,7 @@ AS $$
     )
 $$;
 
-COMMENT ON FUNCTION app.can_delete_file_row(text, uuid, timestamptz) IS
+COMMENT ON FUNCTION app.can_delete_file_row(uuid, uuid, timestamptz) IS
   'Alcance de eliminación lógica para los valores de una fila de app.files.';
 
 
@@ -348,14 +529,14 @@ COMMENT ON FUNCTION app.can_delete_file(uuid) IS
 
 
 -- ---------------------------------------------------------------------------
--- 4. Alcance del historial
+-- 5. Alcance del historial
 -- ---------------------------------------------------------------------------
 -- El alcance se calcula con el área que tenía el actor cuando ejecutó la
 -- acción (actor_area_id), no con su área actual. Así, cambiar de área a un
 -- usuario no reescribe retroactivamente el historial.
 
 CREATE OR REPLACE FUNCTION app.can_view_history(
-  p_actor_user_id text,
+  p_actor_user_id uuid,
   p_actor_area_id uuid
 )
 RETURNS boolean
@@ -381,17 +562,17 @@ AS $$
     )
 $$;
 
-COMMENT ON FUNCTION app.can_view_history(text, uuid) IS
+COMMENT ON FUNCTION app.can_view_history(uuid, uuid) IS
   'Alcance de lectura del historial. Standard y area_head no tienen acceso.';
 
 
 -- ---------------------------------------------------------------------------
--- 5. Registro controlado del historial
+-- 6. Registro controlado del historial
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION audit.append_event(
   p_action        audit.audit_action,
-  p_actor_user_id text  DEFAULT NULL,
+  p_actor_user_id uuid  DEFAULT NULL,
   p_actor_email   text  DEFAULT NULL,
   p_file_id       uuid  DEFAULT NULL,
   p_file_name     text  DEFAULT NULL,
@@ -443,10 +624,10 @@ BEGIN
 
   -- El rol y el área se derivan de la base de datos, no del cliente.
   IF p_actor_user_id IS NOT NULL THEN
-    SELECT p.role, p.area_id
+    SELECT u.role, u.area_id
       INTO v_role, v_area_id
-      FROM app.user_profiles p
-     WHERE p.user_id = p_actor_user_id;
+      FROM app.users u
+     WHERE u.id = p_actor_user_id;
 
     IF v_area_id IS NOT NULL THEN
       SELECT a.name
@@ -472,13 +653,13 @@ END;
 $$;
 
 COMMENT ON FUNCTION audit.append_event(
-  audit.audit_action, text, text, uuid, text, jsonb
+  audit.audit_action, uuid, text, uuid, text, jsonb
 ) IS
   'Única vía de escritura del historial. Deriva rol y área del actor desde la base de datos.';
 
 
 -- ---------------------------------------------------------------------------
--- 6. Guardas de integridad
+-- 7. Guardas de integridad
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.protect_admin_self_update()
@@ -490,7 +671,7 @@ BEGIN
   -- Solo protege al propio administrador. Si no hay contexto (migraciones o
   -- datos de prueba) la comparación es NULL y no se bloquea nada.
   IF OLD.role = 'admin'
-     AND OLD.user_id = app.current_user_id()
+     AND OLD.id = app.current_user_id()
   THEN
     IF NEW.role <> OLD.role THEN
       RAISE EXCEPTION 'Un administrador no puede cambiar su propio rol'
@@ -510,53 +691,65 @@ $$;
 COMMENT ON FUNCTION app.protect_admin_self_update() IS
   'Impide que un administrador se quite su propio rol o se desactive.';
 
-CREATE TRIGGER user_profiles_protect_admin_self
-BEFORE UPDATE ON app.user_profiles
+CREATE TRIGGER users_protect_admin_self
+BEFORE UPDATE ON app.users
 FOR EACH ROW
 EXECUTE FUNCTION app.protect_admin_self_update();
 
 
 -- ---------------------------------------------------------------------------
--- 7. Privilegios
+-- 8. Privilegios
 -- ---------------------------------------------------------------------------
 -- PostgreSQL otorga EXECUTE a PUBLIC en las funciones nuevas. Se retira y se
 -- concede únicamente a app_runtime, que es el rol de la API.
 
-REVOKE ALL ON FUNCTION app.set_context(text, text, inet)              FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_user_id()                          FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_request_id()                       FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_ip_address()                       FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_user_role()                        FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_user_area_id()                     FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.current_user_is_active()                   FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.is_admin()                                 FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.is_manager_of(uuid)                        FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_read_file_row(text, uuid, timestamptz)  FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_delete_file_row(text, uuid, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_upload_for_area(uuid)                  FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_read_file(uuid)                        FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_delete_file(uuid)                      FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.can_view_history(text, uuid)               FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.protect_admin_self_update()                FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.set_context(uuid, text, inet)                FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_user_id()                            FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_request_id()                         FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_ip_address()                         FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.login_lookup(text)                           FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.create_session(uuid, text, inet, text, interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.validate_session(text)                       FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.revoke_session(text)                         FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.revoke_user_sessions(uuid)                   FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.list_sessions(uuid)                          FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_user_role()                          FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_user_area_id()                       FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.current_user_is_active()                     FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.is_admin()                                   FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.is_manager_of(uuid)                          FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_read_file_row(uuid, uuid, timestamptz)   FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_delete_file_row(uuid, uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_upload_for_area(uuid)                    FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_read_file(uuid)                          FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_delete_file(uuid)                        FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.can_view_history(uuid, uuid)                 FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.protect_admin_self_update()                  FROM PUBLIC;
 REVOKE ALL ON FUNCTION audit.append_event(
-  audit.audit_action, text, text, uuid, text, jsonb
+  audit.audit_action, uuid, text, uuid, text, jsonb
 ) FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION app.set_context(text, text, inet)              TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_user_id()                          TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_request_id()                       TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_ip_address()                       TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_user_role()                        TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_user_area_id()                     TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.current_user_is_active()                   TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.is_admin()                                 TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.is_manager_of(uuid)                        TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_read_file_row(text, uuid, timestamptz)  TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_delete_file_row(text, uuid, timestamptz) TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_upload_for_area(uuid)                  TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_read_file(uuid)                        TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_delete_file(uuid)                      TO app_runtime;
-GRANT EXECUTE ON FUNCTION app.can_view_history(text, uuid)               TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.set_context(uuid, text, inet)                TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_user_id()                            TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_request_id()                         TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_ip_address()                         TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.login_lookup(text)                           TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.create_session(uuid, text, inet, text, interval) TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.validate_session(text)                       TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.revoke_session(text)                         TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.revoke_user_sessions(uuid)                   TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.list_sessions(uuid)                          TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_user_role()                          TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_user_area_id()                       TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.current_user_is_active()                     TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.is_admin()                                   TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.is_manager_of(uuid)                          TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_read_file_row(uuid, uuid, timestamptz)   TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_delete_file_row(uuid, uuid, timestamptz) TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_upload_for_area(uuid)                    TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_read_file(uuid)                          TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_delete_file(uuid)                        TO app_runtime;
+GRANT EXECUTE ON FUNCTION app.can_view_history(uuid, uuid)                 TO app_runtime;
 GRANT EXECUTE ON FUNCTION audit.append_event(
-  audit.audit_action, text, text, uuid, text, jsonb
+  audit.audit_action, uuid, text, uuid, text, jsonb
 ) TO app_runtime;

@@ -2,12 +2,11 @@
 """Aprovisionamiento del ambiente de base de datos.
 
 Crea y configura los roles técnicos de PostgreSQL que utilizan Flyway y la API,
-y otorga a app_migrator los privilegios mínimos para referenciar el esquema
-administrado neon_auth.
+y otorga a app_migrator el permiso para crear los esquemas de la aplicación.
 
 Cuándo ejecutarlo:
     Una sola vez, de forma manual, después de crear el proyecto o la rama de
-    Neon y de habilitar Neon Auth, y antes de aplicar las migraciones.
+    Neon, y antes de aplicar las migraciones.
 
 Requisitos:
     - psql 16 o superior, en el sistema o dentro de un contenedor. Se usa
@@ -55,30 +54,6 @@ PROVISIONING_SQL = r"""
 \getenv migrator_password APP_MIGRATOR_PASSWORD
 \getenv runtime_password  APP_RUNTIME_PASSWORD
 
--- Verificación del entorno ---------------------------------------------------
-
-DO $do$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'neon_auth') THEN
-    RAISE EXCEPTION
-      'No existe el esquema neon_auth. Habilita Neon Auth en el proyecto antes de aprovisionar.';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'neon_auth'
-       AND c.relname = 'user'
-  ) THEN
-    RAISE EXCEPTION
-      'No existe neon_auth."user". Habilita Neon Auth en el proyecto antes de aprovisionar.';
-  END IF;
-
-  RAISE NOTICE 'Entorno verificado: existe neon_auth."user".';
-END
-$do$;
-
 -- Roles ----------------------------------------------------------------------
 
 DO $do$
@@ -112,9 +87,11 @@ ALTER ROLE app_runtime WITH
   PASSWORD :'runtime_password';
 
 -- Privilegios de aprovisionamiento -------------------------------------------
--- app_migrator debe poder crear los esquemas app y audit, y referenciar las
--- tablas de neon_auth para definir las claves foráneas de los perfiles y de
--- los archivos.
+-- app_migrator debe poder crear los esquemas app y audit, y la extensión
+-- pg_trgm que usan los índices de búsqueda.
+--
+-- Ya no se otorga nada sobre esquemas de servicios externos: la identidad es
+-- propia y vive íntegramente en el esquema app.
 
 DO $do$
 BEGIN
@@ -122,14 +99,6 @@ BEGIN
   RAISE NOTICE 'Otorgado CREATE sobre la base de datos a app_migrator.';
 END
 $do$;
-
-GRANT USAGE      ON SCHEMA neon_auth TO app_migrator;
-GRANT REFERENCES ON neon_auth."user" TO app_migrator;
-
--- Opcional: si la API necesitara leer correos o nombres directamente desde
--- neon_auth, descomenta la siguiente línea. Por defecto se usa el API de
--- administración de Neon Auth, por lo que app_runtime no requiere acceso.
--- GRANT USAGE ON SCHEMA neon_auth TO app_runtime;
 
 -- Verificación ---------------------------------------------------------------
 
@@ -151,9 +120,7 @@ SELECT rolname           AS rol,
 
 \echo ''
 \echo '== Privilegios de app_migrator =='
-SELECT has_database_privilege('app_migrator', current_database(), 'CREATE')  AS crea_esquemas,
-       has_schema_privilege('app_migrator', 'neon_auth', 'USAGE')            AS usa_neon_auth,
-       has_table_privilege('app_migrator', 'neon_auth."user"', 'REFERENCES') AS referencia_usuario;
+SELECT has_database_privilege('app_migrator', current_database(), 'CREATE') AS crea_esquemas;
 """
 
 
