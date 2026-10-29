@@ -13,6 +13,7 @@
 #
 # Requisitos:
 #   - El comando docker disponible en el PATH.
+#   - Python 3 en el PATH (solo se usa la librería estándar).
 #   - No requiere psql, Flyway ni PostgreSQL instalados en el host.
 #
 # Uso:
@@ -22,6 +23,10 @@
 #
 # Configuración:
 #   Las credenciales del ambiente local se leen de database/.env.test-local.
+#
+# Pruebas:
+#   Las comprobaciones específicas de cada migración viven en database/tests,
+#   un script de Python por migración. Este script los ejecuta al final.
 
 set -euo pipefail
 
@@ -96,6 +101,8 @@ step 2/8 "Comprobando el entorno"
 
 command -v docker >/dev/null 2>&1 \
   || fail "No se encontró el comando docker en el PATH."
+command -v python3 >/dev/null 2>&1 \
+  || fail "No se encontró python3 en el PATH."
 
 [[ -d "$MIGRATIONS_DIR" ]] || fail "No existe el directorio $MIGRATIONS_DIR."
 [[ -f "${SCRIPT_DIR}/provision-environment.sh" ]] \
@@ -204,78 +211,33 @@ flyway_run migrate
 flyway_run validate
 
 # ---------------------------------------------------------------------------
-# 7. Verificación del estado final
+# 7. Pruebas de las migraciones
 # ---------------------------------------------------------------------------
+# Las comprobaciones específicas de cada migración viven en database/tests, un
+# script de Python por migración. Se ejecutan con Python para que funcionen en
+# cualquier sistema operativo, no solo donde haya bash.
 
-step 7/8 "Verificando el estado final"
+step 7/8 "Ejecutando las pruebas de las migraciones"
 
 log ""
 log "-- Migraciones registradas por Flyway --"
 flyway_run info
 
-log ""
-log "-- Objetos creados --"
-docker exec -i -e PGPASSWORD="$APP_MIGRATOR_PASSWORD" "$PG_CONTAINER" \
-  psql -h localhost -U app_migrator -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
-SELECT table_schema AS esquema, count(*) AS tablas
-  FROM information_schema.tables
- WHERE table_schema IN ('app', 'audit', 'flyway')
- GROUP BY table_schema
- ORDER BY table_schema;
+TESTS_DIR="${SCRIPT_DIR}/tests"
+shopt -s nullglob
+test_scripts=("$TESTS_DIR"/test_*.py)
+shopt -u nullglob
+(( ${#test_scripts[@]} > 0 )) || fail "No hay pruebas en $TESTS_DIR."
 
-SELECT unnest(enum_range(NULL::audit.audit_action)) AS accion_registrada;
-SQL
+failed_tests=0
+for test_script in "${test_scripts[@]}"; do
+  log ""
+  if ! python3 "$test_script" --container "$PG_CONTAINER" --env-file "$ENV_FILE"; then
+    failed_tests=$((failed_tests + 1))
+  fi
+done
 
-log ""
-log "-- Barreras de seguridad (rol app_runtime) --"
-
-visible="$( docker exec -i -e PGPASSWORD="$APP_RUNTIME_PASSWORD" "$PG_CONTAINER" \
-  psql -q -tA -h localhost -U app_runtime -d "$DB_NAME" \
-  -c 'SELECT count(*) FROM app.files' )"
-if [[ "$visible" == "0" ]]; then
-  log "OK  app_runtime no ve filas sin políticas: RLS deniega por defecto."
-else
-  fail "app_runtime vio $visible filas en app.files; RLS no está denegando por defecto."
-fi
-
-if docker exec -i -e PGPASSWORD="$APP_RUNTIME_PASSWORD" "$PG_CONTAINER" \
-     psql -q -h localhost -U app_runtime -d "$DB_NAME" \
-     -c 'DELETE FROM app.files WHERE false' >/dev/null 2>&1; then
-  fail "app_runtime pudo ejecutar DELETE sobre app.files."
-else
-  log "OK  app_runtime no puede eliminar archivos."
-fi
-
-if docker exec -i -e PGPASSWORD="$APP_RUNTIME_PASSWORD" "$PG_CONTAINER" \
-     psql -q -h localhost -U app_runtime -d "$DB_NAME" \
-     -c "INSERT INTO audit.action_logs (action, ip_address, request_id) VALUES ('logout','127.0.0.1','x')" >/dev/null 2>&1; then
-  fail "app_runtime pudo insertar directamente en el historial."
-else
-  log "OK  app_runtime no puede escribir directo en el historial."
-fi
-
-# El trigger de inmutabilidad es por fila: con la tabla vacía, un UPDATE o
-# DELETE no fallaría y la prueba daría un falso positivo. Por eso se inserta
-# primero una fila de prueba como propietario de la tabla.
-docker exec -i -e PGPASSWORD="$APP_MIGRATOR_PASSWORD" "$PG_CONTAINER" \
-  psql -q -v ON_ERROR_STOP=1 -h localhost -U app_migrator -d "$DB_NAME" \
-  -c "INSERT INTO audit.action_logs (action, actor_email, ip_address, request_id) VALUES ('login_succeeded','admin@example.com','127.0.0.1','selftest')" >/dev/null
-
-if docker exec -i -e PGPASSWORD="$APP_MIGRATOR_PASSWORD" "$PG_CONTAINER" \
-     psql -q -h localhost -U app_migrator -d "$DB_NAME" \
-     -c "UPDATE audit.action_logs SET action = 'logout'" >/dev/null 2>&1; then
-  fail "El historial permitió UPDATE; el trigger de inmutabilidad no actuó."
-else
-  log "OK  el historial rechaza UPDATE (trigger append-only)."
-fi
-
-if docker exec -i -e PGPASSWORD="$APP_MIGRATOR_PASSWORD" "$PG_CONTAINER" \
-     psql -q -h localhost -U app_migrator -d "$DB_NAME" \
-     -c "DELETE FROM audit.action_logs" >/dev/null 2>&1; then
-  fail "El historial permitió DELETE; el trigger de inmutabilidad no actuó."
-else
-  log "OK  el historial rechaza DELETE (trigger append-only)."
-fi
+(( failed_tests == 0 )) || fail "$failed_tests script(s) de prueba fallaron."
 
 # ---------------------------------------------------------------------------
 # 8. Resultado
