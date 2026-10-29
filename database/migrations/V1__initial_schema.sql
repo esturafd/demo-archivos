@@ -4,7 +4,7 @@
 --
 -- Requisitos previos:
 --   - El ambiente debe haber sido aprovisionado con
---     database/provision-environment.sh, que crea los roles app_migrator y
+--     database/provision_environment.py, que crea los roles app_migrator y
 --     app_runtime y otorga a app_migrator los privilegios necesarios sobre
 --     neon_auth. La creación y configuración de roles NO es tarea de Flyway.
 --   - Neon Auth habilitado; debe existir el esquema neon_auth.
@@ -421,7 +421,7 @@ ALTER TABLE audit.action_logs     ENABLE ROW LEVEL SECURITY;
 -- ---------------------------------------------------------------------------
 -- Privilegios de app_runtime sobre app y audit
 -- NOTA: la creación y configuración de roles pertenece a
--- database/provision-environment.sh; aquí solo se otorgan privilegios
+-- database/provision_environment.py; aquí solo se otorgan privilegios
 -- sobre los esquemas que esta migración crea.
 -- ---------------------------------------------------------------------------
 -- Se otorga lo mínimo necesario. Los INSERT/UPDATE/SELECT quedan además
