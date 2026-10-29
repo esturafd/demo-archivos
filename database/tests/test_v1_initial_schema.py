@@ -36,9 +36,10 @@ EXPECTED_ENUM_VALUES = {
     "access_denied",
 }
 
-# Únicas columnas que app_runtime puede actualizar en app.files: el registro
-# del borrado lógico. El resto de la fila es inmutable tras la carga.
-EXPECTED_UPDATABLE_FILE_COLUMNS = {"deleted_at", "deleted_by_id", "deleted_by_email"}
+# app_runtime no puede actualizar app.files: V1 concedió UPDATE por columna
+# para el borrado lógico, pero V3 lo retira y encauza la eliminación por
+# app.soft_delete_file. PostgreSQL no admite un UPDATE cuya fila resultante
+# deje de cumplir las políticas de SELECT (los eliminados son invisibles).
 
 TEST_FILE_ID = "b0000000-0000-0000-0000-000000000001"
 
@@ -143,9 +144,9 @@ def _check_privileges(ctx: Context, report: Report) -> None:
         )
     }
     report.check(
-        updatable == EXPECTED_UPDATABLE_FILE_COLUMNS,
-        "app_runtime solo puede actualizar las columnas de borrado lógico",
-        f"obtenido {sorted(updatable)}",
+        not updatable,
+        "app_runtime no puede actualizar app.files directamente",
+        f"columnas con UPDATE: {sorted(updatable)}",
     )
 
     # Comprobación de comportamiento, no solo de catálogo. El chequeo de
@@ -178,7 +179,7 @@ def _check_privileges(ctx: Context, report: Report) -> None:
 
 
 def _check_default_deny(ctx: Context, report: Report) -> None:
-    print("\n-- Denegación por defecto (RLS sin políticas) --")
+    print("\n-- Sin contexto de usuario --")
 
     # Se siembra una fila como propietario para que el conteo sea significativo:
     # con la tabla vacía, leer cero filas no probaría nada.
@@ -195,7 +196,7 @@ def _check_default_deny(ctx: Context, report: Report) -> None:
     visible = ctx.app.scalar("SELECT count(*) FROM app.files")
     report.check(
         visible == "0",
-        "app_runtime no ve ninguna fila aunque existan",
+        "sin contexto, app_runtime no ve ninguna fila aunque existan",
         f"vio {visible}",
     )
 
@@ -206,7 +207,7 @@ def _check_default_deny(ctx: Context, report: Report) -> None:
           (owner_email, storage_key, original_name, mime_type, size_bytes)
         VALUES ('x@example.com', 'tests/v1/f2', 'x.pdf', 'application/pdf', 10)
         """,
-        "app_runtime no puede insertar sin una política que lo permita",
+        "sin contexto, app_runtime no puede insertar",
         containing="row-level security",
     )
 

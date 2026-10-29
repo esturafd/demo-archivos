@@ -10,77 +10,30 @@ Ejecución:
 
 from __future__ import annotations
 
-from common import Context, Report, TestFailure, main
+import fixtures
+from common import Context, Report, TestFailure, in_user_context, main
 
 TITLE = "V2 - funciones de autorización"
 
-AREA_A = "11111111-1111-1111-1111-111111111111"
-AREA_B = "22222222-2222-2222-2222-222222222222"
+AREA_A = fixtures.AREA_A
+AREA_B = fixtures.AREA_B
 
-STANDARD_A = "u-standard-a"
-STANDARD_B = "u-standard-b"
-HEAD_A = "u-head-a"
-MANAGER = "u-manager"
-ADMIN = "u-admin"
+STANDARD_A = fixtures.STANDARD_A
+STANDARD_B = fixtures.STANDARD_B
+HEAD_A = fixtures.HEAD_A
+MANAGER = fixtures.MANAGER
+ADMIN = fixtures.ADMIN
 
-F_STANDARD_A = "a0000000-0000-0000-0000-000000000001"
-F_STANDARD_B = "a0000000-0000-0000-0000-000000000002"
-F_HEAD_A = "a0000000-0000-0000-0000-000000000003"
-F_MANAGER = "a0000000-0000-0000-0000-000000000004"
-F_ADMIN = "a0000000-0000-0000-0000-000000000005"
-F_DELETED = "a0000000-0000-0000-0000-000000000006"
-
-SEED_SQL = f"""
-TRUNCATE neon_auth."user", app.areas, app.user_profiles, app.manager_areas,
-         app.files, app.login_rate_limits, audit.action_logs
-  RESTART IDENTITY CASCADE;
-
-INSERT INTO app.areas (id, name) VALUES
-  ('{AREA_A}', 'Area A'),
-  ('{AREA_B}', 'Area B');
-
-INSERT INTO neon_auth."user" (id, email) VALUES
-  ('{STANDARD_A}', 'standard.a@example.com'),
-  ('{STANDARD_B}', 'standard.b@example.com'),
-  ('{HEAD_A}',     'head.a@example.com'),
-  ('{MANAGER}',    'manager@example.com'),
-  ('{ADMIN}',      'admin@example.com');
-
-INSERT INTO app.user_profiles (user_id, role, area_id) VALUES
-  ('{STANDARD_A}', 'standard',  '{AREA_A}'),
-  ('{STANDARD_B}', 'standard',  '{AREA_B}'),
-  ('{HEAD_A}',     'area_head', '{AREA_A}'),
-  ('{MANAGER}',    'manager',   NULL),
-  ('{ADMIN}',      'admin',     NULL);
-
-INSERT INTO app.manager_areas (manager_id, area_id) VALUES ('{MANAGER}', '{AREA_A}');
-
-INSERT INTO app.files
-  (id, owner_id, owner_email, area_id, storage_key, original_name, mime_type, size_bytes)
-VALUES
-  ('{F_STANDARD_A}', '{STANDARD_A}', 'standard.a@example.com', '{AREA_A}',
-   'tests/v2/f1', 'sa.pdf', 'application/pdf', 10),
-  ('{F_STANDARD_B}', '{STANDARD_B}', 'standard.b@example.com', '{AREA_B}',
-   'tests/v2/f2', 'sb.pdf', 'application/pdf', 10),
-  ('{F_HEAD_A}', '{HEAD_A}', 'head.a@example.com', '{AREA_A}',
-   'tests/v2/f3', 'ha.pdf', 'application/pdf', 10),
-  ('{F_MANAGER}', '{MANAGER}', 'manager@example.com', NULL,
-   'tests/v2/f4', 'mg.pdf', 'application/pdf', 10),
-  ('{F_ADMIN}', '{ADMIN}', 'admin@example.com', NULL,
-   'tests/v2/f5', 'ad.pdf', 'application/pdf', 10),
-  ('{F_DELETED}', '{STANDARD_A}', 'standard.a@example.com', '{AREA_A}',
-   'tests/v2/f6', 'borrado.pdf', 'application/pdf', 10);
-
-UPDATE app.files
-   SET deleted_at = now(),
-       deleted_by_id = '{STANDARD_A}',
-       deleted_by_email = 'standard.a@example.com'
- WHERE id = '{F_DELETED}';
-"""
+F_STANDARD_A = fixtures.F_STANDARD_A
+F_STANDARD_B = fixtures.F_STANDARD_B
+F_HEAD_A = fixtures.F_HEAD_A
+F_MANAGER = fixtures.F_MANAGER
+F_ADMIN = fixtures.F_ADMIN
+F_DELETED = fixtures.F_DELETED
 
 
 def run(ctx: Context, report: Report) -> None:
-    ctx.owner.run(SEED_SQL)
+    fixtures.seed(ctx)
     print("\n(datos de prueba sembrados con el rol propietario)")
 
     _check_scope(ctx, report)
@@ -101,16 +54,11 @@ def scope(ctx: Context, user_id: str, expressions: dict) -> dict:
     """Evalúa varias expresiones booleanas con el usuario indicado.
 
     El contexto de V2 es local a la transacción, así que todo se ejecuta dentro
-    de un único bloque BEGIN/COMMIT. SET LOCAL no produce salida, por lo que el
+    de una única transacción. SET LOCAL no produce salida, por lo que el
     resultado es un único conjunto de datos con el JSON de las comprobaciones.
     """
     items = ", ".join(f"'{name}', {expr}" for name, expr in expressions.items())
-    sql = (
-        "BEGIN;\n"
-        f"SET LOCAL app.user_id = '{user_id}';\n"
-        f"SELECT jsonb_build_object({items})::text AS resultado;\n"
-        "COMMIT;"
-    )
+    sql = in_user_context(user_id, f"SELECT jsonb_build_object({items})::text AS resultado")
     return ctx.app.json(sql)
 
 

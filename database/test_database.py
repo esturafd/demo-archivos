@@ -295,34 +295,41 @@ def cleanup(settings: Settings) -> None:
     docker("network", "rm", settings.network, capture=True, check=False)
 
 
+def print_kept_environment(settings: Settings) -> None:
+    log("Ambiente local de base de datos en ejecución.")
+    log()
+    log(f"  Contenedor : {settings.container}")
+    log(f"  Servidor   : localhost:{settings.host_port}")
+    log(f"  Base datos : {settings.db_name}")
+    log()
+    log(f"  Rol propietario : {settings.db_owner} / {settings.db_owner_password}")
+    log(f"  Rol migraciones : app_migrator / {settings.app_migrator_password}")
+    log(f"  Rol aplicación  : app_runtime / {settings.app_runtime_password}")
+    log()
+    log(
+        "  Cadena: postgresql://"
+        f"{settings.db_owner}:{settings.db_owner_password}"
+        f"@localhost:{settings.host_port}/{settings.db_name}?sslmode=disable"
+    )
+    log()
+    log(
+        f"  Cliente: docker exec -it {settings.container} "
+        f"psql -U app_runtime -d {settings.db_name}"
+    )
+    log()
+    log("  Una prueba suelta:")
+    log(
+        f"    python3 {TESTS_DIR / 'test_v1_initial_schema.py'} "
+        f"--container {settings.container}"
+    )
+    log()
+    log("Para detener y eliminar el ambiente:")
+    log(f"  docker stop {settings.container} && docker network rm {settings.network}")
+
+
 def print_result(settings: Settings) -> None:
     if settings.keep_alive:
-        log("Ambiente local de base de datos en ejecución.")
-        log()
-        log(f"  Contenedor : {settings.container}")
-        log(f"  Servidor   : localhost:{settings.host_port}")
-        log(f"  Base datos : {settings.db_name}")
-        log()
-        log(f"  Rol propietario : {settings.db_owner} / {settings.db_owner_password}")
-        log(f"  Rol migraciones : app_migrator / {settings.app_migrator_password}")
-        log(f"  Rol aplicación  : app_runtime / {settings.app_runtime_password}")
-        log()
-        log(
-            "  Cadena: postgresql://"
-            f"{settings.db_owner}:{settings.db_owner_password}"
-            f"@localhost:{settings.host_port}/{settings.db_name}?sslmode=disable"
-        )
-        log()
-        log(f"  Cliente: docker exec -it {settings.container} psql -U app_runtime -d {settings.db_name}")
-        log()
-        log("  Una prueba suelta:")
-        log(
-            f"    python3 {TESTS_DIR / 'test_v1_initial_schema.py'} "
-            f"--container {settings.container}"
-        )
-        log()
-        log("Para detener y eliminar el ambiente:")
-        log(f"  docker stop {settings.container} && docker network rm {settings.network}")
+        print_kept_environment(settings)
     else:
         log("Todas las comprobaciones pasaron. El ambiente se eliminará al finalizar.")
 
@@ -409,9 +416,13 @@ def main() -> int:
 
     except ToolError as error:
         print(f"ERROR: {error}", file=sys.stderr)
+        if settings is not None and settings.keep_alive:
+            print_kept_environment(settings)
         return 1
     except subprocess.CalledProcessError as error:
         print(f"ERROR: falló el comando: {' '.join(map(str, error.cmd))}", file=sys.stderr)
+        if settings is not None and settings.keep_alive:
+            print_kept_environment(settings)
         return 1
     finally:
         if settings is not None and not settings.keep_alive:

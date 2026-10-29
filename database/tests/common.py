@@ -65,6 +65,25 @@ class Context:
         self.database = database
 
 
+def in_user_context(user_id: str, statement: str, *, commit: bool = False) -> str:
+    """Envuelve una sentencia en una transacción con el usuario indicado.
+
+    El contexto de V2 es local a la transacción, así que SET LOCAL y la
+    sentencia deben viajar juntos. Por defecto se termina con ROLLBACK para que
+    ninguna prueba deje residuos; con commit=True el cambio se conserva.
+    """
+    body = statement.strip()
+    if not body.endswith(";"):
+        body += ";"
+    ending = "COMMIT;" if commit else "ROLLBACK;"
+    return (
+        "BEGIN;\n"
+        f"SET LOCAL app.user_id = '{user_id}';\n"
+        f"{body}\n"
+        f"{ending}"
+    )
+
+
 def build_context(env_file: Path, container: Optional[str]) -> Context:
     env = EnvFile.load(env_file)
     database = env.require("DB_NAME")
