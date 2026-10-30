@@ -9,6 +9,8 @@ repositories {
 }
 
 dependencies {
+    implementation 'io.quarkus:quarkus-hibernate-validator'
+    implementation 'io.quarkus:quarkus-rest-jackson'
     implementation 'io.quarkus:quarkus-smallrye-openapi'
     implementation enforcedPlatform("${quarkusPlatformGroupId}:${quarkusPlatformArtifactId}:${quarkusPlatformVersion}")
     implementation 'io.quarkus:quarkus-arc'
@@ -40,11 +42,14 @@ tasks.register('nativeBuild') {
     dependsOn tasks.named('build')
 }
 
-// Las propiedades se activan solo cuando se solicita esta tarea.
-gradle.taskGraph.whenReady { graph ->
-    if (graph.allTasks.any { it.name == 'native-build' }) {
-        System.setProperty('quarkus.package.type', 'native')
-        System.setProperty('quarkus.native.container-build', 'true')
-    }
+// Las propiedades deben fijarse en la fase de configuración, antes de que el
+// plugin de Quarkus las lea; por eso no se hace en `whenReady` ni en `doFirst`.
+def nativeRequested = gradle.startParameter.taskNames.any {
+    it == 'nativeBuild' || it.endsWith(':nativeBuild')
+}
+
+if (nativeRequested) {
+    System.setProperty('quarkus.native.enabled', 'true')
+    System.setProperty('quarkus.native.container-build', 'true')
 }
 
