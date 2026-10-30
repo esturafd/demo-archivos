@@ -1,0 +1,191 @@
+# Integración y despliegue continuos de la base de datos.
+#
+# Aplica la configuración declarativa de Neon y, después, las migraciones de
+# Flyway. Solo se ejecuta en `main`.
+#
+# Orden de los trabajos:
+#   1. neon-config  -> aplica database/neon.ts (auth, buckets y política de ramas)
+#   2. flyway       -> validate, migrate e info sobre el esquema `flyway`
+#
+# Requisitos previos, una sola vez por ambiente:
+#   - El aprovisionamiento se ejecuta MANUALMENTE antes del primer despliegue:
+#       python3 database/provision_environment.py --env-file <ruta>/.env
+#     Este pipeline asume que los roles app_migrator y app_runtime ya existen.
+#
+# Secretos y variables: ver la tabla al final de este archivo.
+
+name: Base de datos (Neon + Flyway)
+
+on:
+  push:
+    branches:
+      - main
+    # Solo cuando cambia algo que afecta a la base de datos.
+    paths:
+      - "database/**"
+      - ".github/workflows/database-deploy.yml"
+
+# El pipeline solo lee el repositorio.
+permissions:
+  contents: read
+
+# Nunca dos despliegues de base de datos a la vez. Si llega otro push mientras
+# hay uno en curso, se encola en lugar de cancelarlo: no conviene interrumpir
+# una migración a medias.
+concurrency:
+  group: database-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Configuración declarativa de Neon
+  # ---------------------------------------------------------------------------
+  neon-config:
+    name: Configuración de Neon
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: database/package-lock.json
+
+      - name: Instalar el tooling de Neon
+        working-directory: database
+        run: npm ci
+
+      - name: Comprobar la configuración
+        run: |
+          missing=""
+          for name in NEON_PROJECT_ID NEON_BRANCH; do
+            if [ -z "${!name}" ]; then missing="${missing} ${name}"; fi
+          done
+          if [ -z "${NEON_API_KEY}" ]; then missing="${missing} NEON_API_KEY"; fi
+          if [ -n "${missing}" ]; then
+            echo "::error::Falta configuración para Neon:${missing}"
+            exit 1
+          fi
+        env:
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_BRANCH: ${{ vars.NEON_BRANCH }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+
+      # `deploy` aplica neon.ts: autenticación, buckets y política de ramas.
+      # --no-env-pull evita que intente escribir un .env en el runner.
+      - name: Aplicar database/neon.ts
+        working-directory: database
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_BRANCH: ${{ vars.NEON_BRANCH }}
+        run: |
+          npx --yes neon@latest deploy \
+            --config neon.ts \
+            --project-id "${NEON_PROJECT_ID}" \
+            --branch "${NEON_BRANCH}" \
+            --no-env-pull \
+            --yes
+
+  # ---------------------------------------------------------------------------
+  # 2. Migraciones con Flyway
+  # ---------------------------------------------------------------------------
+  flyway:
+    name: Migraciones con Flyway
+    runs-on: ubuntu-latest
+    environment: production
+    needs: neon-config
+
+    env:
+      FLYWAY_URL: ${{ vars.FLYWAY_URL }}
+      FLYWAY_USER: ${{ vars.FLYWAY_USER }}
+      # El historial de Flyway vive en su propio esquema, igual que en local.
+      FLYWAY_DEFAULT_SCHEMA: flyway
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CONNECT_RETRIES: "30"
+      # Versión fijada: la misma con la que se validó el proyecto en local.
+      FLYWAY_IMAGE: ${{ vars.FLYWAY_IMAGE || 'flyway/flyway:13.11.1' }}
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Comprobar la configuración
+        env:
+          FLYWAY_PASSWORD: ${{ secrets.FLYWAY_PASSWORD }}
+        run: |
+          missing=""
+          for name in FLYWAY_URL FLYWAY_USER; do
+            if [ -z "${!name}" ]; then missing="${missing} ${name}"; fi
+          done
+          if [ -z "${FLYWAY_PASSWORD}" ]; then missing="${missing} FLYWAY_PASSWORD"; fi
+          if [ -n "${missing}" ]; then
+            echo "::error::Falta configuración para Flyway:${missing}"
+            exit 1
+          fi
+
+      # Las credenciales se pasan al contenedor por nombre (`--env VAR`), de
+      # modo que no aparecen en la línea de comandos ni en los registros.
+      #
+      # El orden es migrate -> validate -> info.
+      # `validate` NO puede ir primero: en un ambiente vacío el esquema
+      # `flyway` todavía no existe y falla con "Schema flyway doesn't exist
+      # yet". `migrate` ya valida las migraciones aplicadas antes de aplicar
+      # las pendientes, así que el orden no debilita la comprobación.
+      - name: Aplicar y validar las migraciones
+        env:
+          FLYWAY_PASSWORD: ${{ secrets.FLYWAY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          run_flyway() {
+            docker run --rm \
+              --volume "${GITHUB_WORKSPACE}/database/migrations:/flyway/sql:ro" \
+              --env FLYWAY_URL \
+              --env FLYWAY_USER \
+              --env FLYWAY_PASSWORD \
+              --env FLYWAY_DEFAULT_SCHEMA \
+              --env FLYWAY_LOCATIONS \
+              --env FLYWAY_CONNECT_RETRIES \
+              "${FLYWAY_IMAGE}" "$@"
+          }
+
+          echo "::group::flyway migrate"
+          run_flyway migrate
+          echo "::endgroup::"
+
+          # Detecta migraciones ya aplicadas que hayan cambiado.
+          echo "::group::flyway validate"
+          run_flyway validate
+          echo "::endgroup::"
+
+          echo "::group::flyway info"
+          run_flyway info
+          echo "::endgroup::"
+
+# -----------------------------------------------------------------------------
+# Secretos y variables
+# -----------------------------------------------------------------------------
+# Se configuran en Settings > Environments > `production` (o a nivel de
+# repositorio). El trabajo declara `environment: production`, así que toma los
+# valores de ese ambiente y también los del repositorio.
+#
+#   Nombre                 Tipo      Contenido
+#   ---------------------  --------  ------------------------------------------
+#   NEON_API_KEY           secreto   API key de Neon para aplicar neon.ts
+#   NEON_PROJECT_ID        variable  identificador del proyecto de Neon
+#   NEON_BRANCH            variable  rama de Neon a configurar, por ejemplo main
+#   FLYWAY_URL             variable  URL JDBC sin credenciales:
+#                                    jdbc:postgresql://<host>/<base>?sslmode=require
+#   FLYWAY_USER            variable  app_migrator
+#   FLYWAY_PASSWORD        secreto   contraseña de app_migrator
+#   FLYWAY_IMAGE           variable  opcional; imagen de Flyway (por defecto
+#                                    flyway/flyway:13.11.1)
+#
+# No se incluyen aquí las credenciales del backend ni de Cloud Run: son de otro
+# pipeline.
