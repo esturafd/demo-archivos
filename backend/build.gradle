@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id 'io.quarkus'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    implementation 'io.quarkus:quarkus-smallrye-openapi'
+    implementation enforcedPlatform("${quarkusPlatformGroupId}:${quarkusPlatformArtifactId}:${quarkusPlatformVersion}")
+    implementation 'io.quarkus:quarkus-arc'
+    implementation 'io.quarkus:quarkus-rest'
+    testImplementation 'io.quarkus:quarkus-junit'
+    testImplementation 'io.rest-assured:rest-assured'
+}
+
+group = 'me.esturafd.demo.archivos'
+version = '1.0.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+compileTestJava {
+    options.encoding = 'UTF-8'
+}
+
+tasks.register('nativeBuild') {
+    group = 'build'
+    description = 'Compila el ejecutable nativo usando un contenedor.'
+    dependsOn tasks.named('build')
+}
+
+// Las propiedades se activan solo cuando se solicita esta tarea.
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name == 'native-build' }) {
+        System.setProperty('quarkus.package.type', 'native')
+        System.setProperty('quarkus.native.container-build', 'true')
+    }
+}
+

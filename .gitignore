@@ -1,5 +1,11 @@
+# Neon
 .neon
 node_modules/
 .env
+
+# Script automatizados
 __pycache__/
 *.pyc
+
+# Quarkus
+.quarkus/
