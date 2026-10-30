@@ -12,6 +12,8 @@ Requisitos:
     - psql 16 o superior, en el sistema o dentro de un contenedor. Se usa
       \\getenv para que las contraseñas no aparezcan en la sentencia SQL.
     - Un archivo de configuración. Toma database/.env.example como base.
+    - Una conexión con un rol que pueda crear roles (CREATEROLE). No hace falta
+      que sea superusuario: el script nunca cambia atributos que lo requieran.
 
 Uso:
     ./provision_environment.py
@@ -74,17 +76,54 @@ BEGIN
 END
 $do$;
 
--- Atributos y contraseñas ----------------------------------------------------
+-- Acceso y contraseñas --------------------------------------------------------
 -- app_migrator: ejecuta Flyway y es propietario de app y audit.
 -- app_runtime : conexión de la API; nunca debe omitir RLS.
 
 ALTER ROLE app_migrator WITH
-  LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE
+  LOGIN
   PASSWORD :'migrator_password';
 
 ALTER ROLE app_runtime WITH
-  LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE
+  LOGIN
   PASSWORD :'runtime_password';
+
+-- Comprobación de atributos ---------------------------------------------------
+-- No se intenta corregirlos, solo detectarlos: si app_runtime pudiera omitir
+-- RLS, las políticas de V3 dejarían de proteger las filas y el fallo sería
+-- silencioso. Por eso aquí se aborta con un mensaje explícito.
+
+DO $do$
+DECLARE
+  problemas text;
+BEGIN
+  SELECT string_agg(rolname || ' -> ' || atributo, ', ' ORDER BY rolname, atributo)
+    INTO problemas
+    FROM (
+      SELECT rolname, 'SUPERUSER'  AS atributo FROM pg_roles
+       WHERE rolname IN ('app_migrator', 'app_runtime') AND rolsuper
+      UNION ALL
+      SELECT rolname, 'BYPASSRLS'  FROM pg_roles
+       WHERE rolname IN ('app_migrator', 'app_runtime') AND rolbypassrls
+      UNION ALL
+      SELECT rolname, 'CREATEDB'   FROM pg_roles
+       WHERE rolname IN ('app_migrator', 'app_runtime') AND rolcreatedb
+      UNION ALL
+      SELECT rolname, 'CREATEROLE' FROM pg_roles
+       WHERE rolname IN ('app_migrator', 'app_runtime') AND rolcreaterole
+    ) AS detectados;
+
+  IF problemas IS NOT NULL THEN
+    RAISE EXCEPTION
+      'Los roles técnicos tienen atributos inseguros y no se pueden corregir desde aquí: %. Revócalos con el rol propietario antes de continuar.',
+      problemas
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  RAISE NOTICE
+    'Atributos verificados: sin SUPERUSER, BYPASSRLS, CREATEDB ni CREATEROLE.';
+END
+$do$;
 
 -- Privilegios de aprovisionamiento -------------------------------------------
 -- app_migrator debe poder crear los esquemas app y audit, y la extensión
