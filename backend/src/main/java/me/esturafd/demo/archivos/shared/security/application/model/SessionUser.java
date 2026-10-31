@@ -29,4 +29,9 @@ public record SessionUser(
     String areaName,
     Boolean areaActive
 ) {
+
+    /** True si el rol es el de administrador. */
+    public boolean isAdmin() {
+        return "admin".equals(role);
+    }
 }

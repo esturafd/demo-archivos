@@ -56,6 +56,9 @@ public class SessionFilter implements ContainerRequestFilter {
         if (requiresSession() && currentSession.user().isEmpty()) {
             throw ApiException.unauthenticated();
         }
+        if (requiresAdmin() && !currentSession.user().orElseThrow(ApiException::unauthenticated).isAdmin()) {
+            throw ApiException.forbidden();
+        }
     }
 
     private void resolveSession(ContainerRequestContext request) {
@@ -85,5 +88,17 @@ public class SessionFilter implements ContainerRequestFilter {
         }
         Class<?> resource = resourceInfo.getResourceClass();
         return resource != null && resource.isAnnotationPresent(RequiresSession.class);
+    }
+
+    private boolean requiresAdmin() {
+        Method method = resourceInfo.getResourceMethod();
+        if (method != null) {
+            if (method.isAnnotationPresent(RequiresAdmin.class)
+                || method.getDeclaringClass().isAnnotationPresent(RequiresAdmin.class)) {
+                return true;
+            }
+        }
+        Class<?> resource = resourceInfo.getResourceClass();
+        return resource != null && resource.isAnnotationPresent(RequiresAdmin.class);
     }
 }

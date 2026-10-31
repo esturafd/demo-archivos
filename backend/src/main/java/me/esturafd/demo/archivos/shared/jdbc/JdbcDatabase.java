@@ -1,15 +1,17 @@
 package me.esturafd.demo.archivos.shared.jdbc;
 
-import io.agroal.api.AgroalDataSource;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.error.application.ApiException;
-import org.jboss.logging.Logger;
-
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.UUID;
+
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
+
+import io.agroal.api.AgroalDataSource;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import me.esturafd.demo.archivos.shared.error.application.ApiException;
 
 /**
  * Abre conexiones y transacciones.
@@ -29,6 +31,15 @@ public class JdbcDatabase {
 
     @Inject
     AgroalDataSource dataSource;
+
+    /**
+     * Rol bajo el que corren las transacciones. Vacío significa no cambiar de
+     * rol. Se usa para que la transacción quede sujeta a RLS aunque la conexión
+     * use un rol privilegiado: en producción la conexión ya es este rol, y en
+     * las pruebas se fija desde la configuración.
+     */
+    @ConfigProperty(name = "app.database.runtime-role", defaultValue = "")
+    String runtimeRole;
 
     /** Comprueba que el proveedor responde, sin lanzar excepciones. */
     public boolean isAvailable() {
@@ -54,6 +65,7 @@ public class JdbcDatabase {
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             SqlExecutor sql = new SqlExecutor(connection);
+            applyRuntimeRole(sql);
             sql.run("SELECT app.set_context(?::uuid, ?, ?::inet)", userId, requestId, ipAddress);
             try {
                 T result = work.run(sql);
@@ -67,7 +79,7 @@ public class JdbcDatabase {
             throw apiFailure;
         } catch (Exception failure) {
             LOG.errorf(failure, "Fallo en la operación de datos");
-            throw ApiException.internalError(failure);
+            throw translate(failure);
         }
     }
 
@@ -79,7 +91,7 @@ public class JdbcDatabase {
             throw apiFailure;
         } catch (Exception failure) {
             LOG.errorf(failure, "Fallo en la operación de datos");
-            throw ApiException.internalError(failure);
+            throw translate(failure);
         }
     }
 
@@ -89,5 +101,53 @@ public class JdbcDatabase {
         } catch (SQLException rollbackFailure) {
             LOG.warnf("No se pudo revertir la transacción: %s", rollbackFailure.getMessage());
         }
+    }
+
+    /**
+     * Cambia al rol de ejecución dentro de la transacción. El nombre no puede
+     * ir como parámetro enlazado, así que se valida su forma antes de usarlo.
+     */
+    private void applyRuntimeRole(SqlExecutor sql) {
+        if (runtimeRole == null || runtimeRole.isBlank()) {
+            return;
+        }
+        if (!runtimeRole.matches("[a-z_][a-z0-9_]*")) {
+            throw new IllegalStateException("Nombre de rol de ejecución inválido: " + runtimeRole);
+        }
+        sql.run("SET LOCAL ROLE " + runtimeRole);
+    }
+
+    /**
+     * Traduce un fallo de la base a la respuesta que corresponde: una violación
+     * de unicidad es un conflicto (409) y una denegación de permisos o política
+     * es un acceso prohibido (403). El resto son errores internos.
+     */
+    private static ApiException translate(Exception failure) {
+        SQLException sql = sqlException(failure);
+        if (sql == null) {
+            return ApiException.internalError(failure);
+        }
+        String state = sql.getSQLState();
+        if ("23505".equals(state)) {
+            return ApiException.conflict(null);
+        }
+        if ("23514".equals(state)) {
+            return ApiException.badRequest(null);
+        }
+        if ("42501".equals(state)) {
+            return ApiException.forbidden();
+        }
+        return ApiException.internalError(failure);
+    }
+
+    private static SQLException sqlException(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof SQLException sql) {
+                return sql;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 }

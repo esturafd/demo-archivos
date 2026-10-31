@@ -26,9 +26,10 @@ import java.util.stream.Stream;
  * el build, para no duplicarlas). Después siembra un conjunto de usuarios fijo.
  *
  * <p>Se conecta con el usuario que levanta Dev Services, que es superusuario del
- * contenedor desechable; por eso puede crear roles y esquemas. El cumplimiento
- * de RLS como {@code app_runtime} lo verifica la suite de
- * {@code database/tests}, que sí se conecta con ese rol.
+ * contenedor desechable; por eso puede crear roles y esquemas. Como la conexión
+ * de la aplicación cambia al rol de ejecución dentro de cada transacción
+ * ({@code %test.app.database.runtime-role}), las consultas de la API quedan
+ * sujetas a RLS igual que en producción.
  */
 public abstract class DatabaseTestBase {
 
@@ -42,12 +43,14 @@ public abstract class DatabaseTestBase {
     public static final String INACTIVE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2";
     public static final String OTHER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3";
     public static final String HEAD = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4";
+    public static final String MANAGER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa6";
 
     public static final String ADMIN_EMAIL = "admin@demo.local";
     public static final String ACTIVE_EMAIL = "activo@demo.local";
     public static final String INACTIVE_EMAIL = "inactivo@demo.local";
     public static final String OTHER_EMAIL = "otro@demo.local";
     public static final String HEAD_EMAIL = "jefe@demo.local";
+    public static final String MANAGER_EMAIL = "gerente@demo.local";
 
     private static boolean schemaReady;
 
@@ -149,14 +152,19 @@ public abstract class DatabaseTestBase {
               ('%s', '%s', '%s', 'Activo',     'standard',  '%s',   true,  NULL),
               ('%s', '%s', '%s', 'Inactivo',   'standard',  '%s',   false, now()),
               ('%s', '%s', '%s', 'Otro',       'standard',  '%s',   true,  NULL),
-              ('%s', '%s', '%s', 'Jefe',       'area_head', '%s',   true,  NULL);
+              ('%s', '%s', '%s', 'Jefe',       'area_head', '%s',   true,  NULL),
+              ('%s', '%s', '%s', 'Gerente',    'manager',   NULL,   true,  NULL);
+
+            INSERT INTO app.manager_areas (manager_id, area_id) VALUES ('%s', '%s');
             """.formatted(
             AREA_A, AREA_B,
             ADMIN, ADMIN_EMAIL, hash,
             ACTIVE, ACTIVE_EMAIL, hash, AREA_A,
             INACTIVE, INACTIVE_EMAIL, hash, AREA_A,
             OTHER, OTHER_EMAIL, hash, AREA_B,
-            HEAD, HEAD_EMAIL, hash, AREA_A
+            HEAD, HEAD_EMAIL, hash, AREA_A,
+            MANAGER, MANAGER_EMAIL, hash,
+            MANAGER, AREA_A
         );
     }
 
