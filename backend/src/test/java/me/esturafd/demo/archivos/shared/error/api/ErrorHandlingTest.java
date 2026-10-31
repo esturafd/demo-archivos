@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.api.error;
+package me.esturafd.demo.archivos.shared.error.api;
 
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.response.ExtractableResponse;

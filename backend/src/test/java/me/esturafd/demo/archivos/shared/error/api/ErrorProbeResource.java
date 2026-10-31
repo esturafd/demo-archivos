@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.api.error;
+package me.esturafd.demo.archivos.shared.error.api;
 
 import jakarta.inject.Inject;
 import jakarta.validation.constraints.Size;
@@ -7,9 +7,9 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
-import me.esturafd.demo.archivos.shared.application.error.ApiException;
-import me.esturafd.demo.archivos.shared.api.request.RequestIdFilter;
-import me.esturafd.demo.archivos.shared.application.request.RequestContext;
+import me.esturafd.demo.archivos.shared.error.application.ApiException;
+import me.esturafd.demo.archivos.shared.request.api.RequestIdFilter;
+import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import org.jboss.logging.MDC;
 
 /**

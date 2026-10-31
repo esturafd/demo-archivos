@@ -3,7 +3,7 @@ package me.esturafd.demo.archivos.health.infrastructure;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Alternative;
-import me.esturafd.demo.archivos.shared.application.storage.StorageMediator;
+import me.esturafd.demo.archivos.shared.storage.application.StorageMediator;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**

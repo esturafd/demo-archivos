@@ -2,7 +2,7 @@ package me.esturafd.demo.archivos.health.infrastructure;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.application.data.DataMediator;
+import me.esturafd.demo.archivos.shared.data.application.DataMediator;
 import org.eclipse.microprofile.health.HealthCheck;
 import org.eclipse.microprofile.health.HealthCheckResponse;
 import org.eclipse.microprofile.health.Readiness;

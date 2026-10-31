@@ -15,6 +15,9 @@ dependencies {
     implementation 'io.quarkus:quarkus-jdbc-postgresql'
     implementation 'io.quarkiverse.amazonservices:quarkus-amazon-s3'
     implementation 'io.quarkus:quarkus-smallrye-health'
+    // Seguridad: bcrypt para las contraseñas. El CSRF se resuelve con un filtro
+    // propio para conservar el formato uniforme de error.
+    implementation 'io.quarkus:quarkus-elytron-security-common'
     implementation enforcedPlatform("${quarkusPlatformGroupId}:quarkus-amazon-services-bom:${quarkusPlatformVersion}")
     implementation 'io.quarkus:quarkus-hibernate-validator'
     implementation 'io.quarkus:quarkus-rest-jackson'
@@ -41,6 +44,15 @@ compileJava {
 
 compileTestJava {
     options.encoding = 'UTF-8'
+}
+
+// Las pruebas del backend aplican el mismo esquema que producción. Las
+// migraciones se copian al classpath en vez de duplicarlas, para que sigan
+// siendo la única fuente de verdad.
+tasks.named('processTestResources') {
+    from('../database/migrations') {
+        into 'db/migration'
+    }
 }
 
 tasks.register('nativeBuild') {

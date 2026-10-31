@@ -9,3 +9,7 @@ __pycache__/
 
 # Quarkus
 .quarkus/
+
+# Otros
+.DS_Store
+
