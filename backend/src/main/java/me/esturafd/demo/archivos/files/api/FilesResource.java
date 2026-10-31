@@ -24,9 +24,23 @@ import me.esturafd.demo.archivos.files.application.model.DownloadedFile;
 import me.esturafd.demo.archivos.files.application.model.StoredFile;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
 import me.esturafd.demo.archivos.shared.security.api.RequiresSession;
+import me.esturafd.demo.archivos.shared.error.api.ApiError;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.enums.SchemaType;
+import org.eclipse.microprofile.openapi.annotations.headers.Header;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.media.SchemaProperty;
+import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
+import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirementsSet;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.jboss.resteasy.reactive.server.multipart.FormValue;
 import org.jboss.resteasy.reactive.server.multipart.MultipartFormDataInput;
 
@@ -47,6 +61,17 @@ import java.util.UUID;
 @Path("/api/files")
 @Produces(MediaType.APPLICATION_JSON)
 @RequiresSession
+@Tag(name = "Archivos")
+@APIResponses({
+    @APIResponse(
+        responseCode = "401",
+        description = "No hay una sesión válida.",
+        content = @Content(schema = @Schema(implementation = ApiError.class))),
+    @APIResponse(
+        responseCode = "500",
+        description = "Error inesperado.",
+        content = @Content(schema = @Schema(implementation = ApiError.class)))
+})
 public class FilesResource {
 
     private static final String FILE_PART = "file";
@@ -75,9 +100,23 @@ public class FilesResource {
 
     /** Lista y busca archivos visibles para el usuario, con paginación por cursor. */
     @GET
+    @Operation(
+        summary = "Listar archivos",
+        description = """
+            Archivos visibles para el usuario, con búsqueda por nombre y paginación
+            por cursor. El alcance lo acota RLS: cada rol ve lo que le corresponde.
+            """
+    )
+    @APIResponse(
+        responseCode = "200",
+        description = "Página de archivos.",
+        content = @Content(schema = @Schema(implementation = FilePageResponse.class)))
     public FilePageResponse list(
+        @Parameter(description = "Texto a buscar en el nombre del archivo.")
         @QueryParam("search") String search,
+        @Parameter(description = "Cursor opaco de la página anterior (`nextCursor`).")
         @QueryParam("cursor") String cursor,
+        @Parameter(description = "Tamaño de página. Por defecto 20, máximo 100.")
         @QueryParam("limit") Integer limit
     ) {
         SessionUser actor = currentSession.require();
@@ -88,6 +127,55 @@ public class FilesResource {
     /** Carga un archivo. */
     @POST
     @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Operation(
+        summary = "Cargar un archivo",
+        description = """
+            Recibe el archivo como `multipart/form-data` en la parte `file`. El tipo
+            se valida por la firma real del contenido, no por lo que declare el
+            cliente. Máximo 20 MB.
+            """
+    )
+    @SecurityRequirementsSet({
+        @SecurityRequirement(name = "sessionCookie"),
+        @SecurityRequirement(name = "csrfHeader")
+    })
+    @RequestBody(
+        required = true,
+        description = "El archivo, en la parte `file`.",
+        content = @Content(
+            mediaType = MediaType.MULTIPART_FORM_DATA,
+            schema = @Schema(
+                type = SchemaType.OBJECT,
+                properties = @SchemaProperty(
+                    name = FILE_PART,
+                    type = SchemaType.STRING,
+                    format = "binary",
+                    description = "Contenido del archivo."))))
+    @APIResponses({
+        @APIResponse(
+            responseCode = "201",
+            description = "Archivo cargado.",
+            headers = @Header(
+                name = "Location",
+                description = "Ruta del archivo creado, `/api/files/{id}`."),
+            content = @Content(schema = @Schema(implementation = FileView.class))),
+        @APIResponse(
+            responseCode = "400",
+            description = "Falta la parte `file` o no se pudo leer.",
+            content = @Content(schema = @Schema(implementation = ApiError.class))),
+        @APIResponse(
+            responseCode = "413",
+            description = "El archivo supera los 20 MB.",
+            content = @Content(schema = @Schema(implementation = ApiError.class))),
+        @APIResponse(
+            responseCode = "415",
+            description = "El tipo de archivo no está permitido.",
+            content = @Content(schema = @Schema(implementation = ApiError.class))),
+        @APIResponse(
+            responseCode = "422",
+            description = "El contenido no coincide con el tipo declarado.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
     public Response upload(MultipartFormDataInput input) {
         SessionUser actor = currentSession.require();
         FormValue part = filePart(input);
@@ -110,7 +198,23 @@ public class FilesResource {
     /** Metadatos visibles de un archivo. */
     @GET
     @Path("/{id}")
-    public FileView find(@PathParam("id") UUID id) {
+    @Operation(
+        summary = "Consultar un archivo",
+        description = "Metadatos visibles de un archivo. Nunca incluye la clave interna."
+    )
+    @APIResponses({
+        @APIResponse(
+            responseCode = "200",
+            description = "Metadatos del archivo.",
+            content = @Content(schema = @Schema(implementation = FileView.class))),
+        @APIResponse(
+            responseCode = "404",
+            description = "El archivo no existe o queda fuera del alcance.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
+    public FileView find(
+        @Parameter(description = "Identificador del archivo.", required = true) @PathParam("id") UUID id
+    ) {
         SessionUser actor = currentSession.require();
         return FileView.from(findFile.find(id, actor, context.requestId(), context.clientIp()));
     }
@@ -119,7 +223,28 @@ public class FilesResource {
     @GET
     @Path("/{id}/content")
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
-    public Response content(@PathParam("id") UUID id) {
+    @Operation(
+        summary = "Descargar un archivo",
+        description = """
+            Transmite el contenido del archivo con su tipo real y un
+            `Content-Disposition` de tipo `attachment`.
+            """
+    )
+    @APIResponses({
+        @APIResponse(
+            responseCode = "200",
+            description = "Contenido del archivo.",
+            content = @Content(
+                mediaType = MediaType.APPLICATION_OCTET_STREAM,
+                schema = @Schema(type = SchemaType.STRING, format = "binary"))),
+        @APIResponse(
+            responseCode = "404",
+            description = "El archivo no existe o queda fuera del alcance.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response content(
+        @Parameter(description = "Identificador del archivo.", required = true) @PathParam("id") UUID id
+    ) {
         SessionUser actor = currentSession.require();
         DownloadedFile file = downloadFile.download(id, actor, context.requestId(), context.clientIp());
 
@@ -139,7 +264,24 @@ public class FilesResource {
     /** Elimina lógicamente el archivo. */
     @DELETE
     @Path("/{id}")
-    public Response delete(@PathParam("id") UUID id) {
+    @Operation(
+        summary = "Eliminar un archivo",
+        description = "Marca el archivo como eliminado; no borra el objeto de inmediato."
+    )
+    @SecurityRequirementsSet({
+        @SecurityRequirement(name = "sessionCookie"),
+        @SecurityRequirement(name = "csrfHeader")
+    })
+    @APIResponses({
+        @APIResponse(responseCode = "204", description = "Archivo eliminado."),
+        @APIResponse(
+            responseCode = "404",
+            description = "El archivo no existe o queda fuera del alcance.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response delete(
+        @Parameter(description = "Identificador del archivo.", required = true) @PathParam("id") UUID id
+    ) {
         SessionUser actor = currentSession.require();
         deleteFile.delete(id, actor, context.requestId(), context.clientIp());
         return Response.noContent().build();

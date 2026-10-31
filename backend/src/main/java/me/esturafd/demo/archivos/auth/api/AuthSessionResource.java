@@ -27,11 +27,23 @@ import me.esturafd.demo.archivos.auth.application.LogoutUseCase;
 import me.esturafd.demo.archivos.auth.application.QuerySessions;
 import me.esturafd.demo.archivos.auth.application.RevokeSessionUseCase;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
+import me.esturafd.demo.archivos.shared.error.api.ApiError;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
 import me.esturafd.demo.archivos.shared.security.api.RequiresSession;
 import me.esturafd.demo.archivos.shared.security.api.SessionCookies;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.headers.Header;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirements;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirementsSet;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Recurso de autenticación y sesiones.
@@ -43,6 +55,17 @@ import me.esturafd.demo.archivos.shared.security.api.SessionCookies;
 @Path("/api/auth/sessions")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Autenticación")
+@APIResponses({
+    @APIResponse(
+        responseCode = "401",
+        description = "No hay una sesión válida.",
+        content = @Content(schema = @Schema(implementation = ApiError.class))),
+    @APIResponse(
+        responseCode = "500",
+        description = "Error inesperado.",
+        content = @Content(schema = @Schema(implementation = ApiError.class)))
+})
 public class AuthSessionResource {
 
     @Inject
@@ -71,6 +94,35 @@ public class AuthSessionResource {
 
     /** Inicia sesión. Devuelve la cookie y el usuario; el token no va en el cuerpo. */
     @POST
+    @Operation(
+        summary = "Iniciar sesión",
+        description = """
+            Valida el correo y la contraseña y emite la cookie de sesión. Es la única
+            operación pública: no exige sesión ni token CSRF previo.
+            """
+    )
+    @SecurityRequirements({})
+    @APIResponses({
+        @APIResponse(
+            responseCode = "201",
+            description = "Sesión iniciada. La cookie `session` viaja en `Set-Cookie`.",
+            headers = @Header(
+                name = "Set-Cookie",
+                description = "Cookie de sesión `HttpOnly` y su cookie CSRF `csrf-token`."),
+            content = @Content(schema = @Schema(implementation = CurrentSessionResponse.class))),
+        @APIResponse(
+            responseCode = "400",
+            description = "El cuerpo no supera la validación.",
+            content = @Content(schema = @Schema(implementation = ApiError.class))),
+        @APIResponse(
+            responseCode = "401",
+            description = "Credenciales inválidas.",
+            content = @Content(schema = @Schema(implementation = ApiError.class))),
+        @APIResponse(
+            responseCode = "429",
+            description = "Demasiados intentos. Vuelve a intentarlo más tarde.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
     public Response create(@Valid LoginRequest request) {
         String ipAddress = context.clientIp();
         String userAgent = headers.getHeaderString(HttpHeaders.USER_AGENT);
@@ -101,6 +153,14 @@ public class AuthSessionResource {
     @GET
     @Path("/current")
     @RequiresSession
+    @Operation(
+        summary = "Sesión actual",
+        description = "Usuario autenticado y datos de la sesión con la que se navega."
+    )
+    @APIResponse(
+        responseCode = "200",
+        description = "Usuario y sesión actuales.",
+        content = @Content(schema = @Schema(implementation = CurrentSessionResponse.class)))
     public CurrentSessionResponse current() {
         SessionUser user = currentSession.require();
         return new CurrentSessionResponse(
@@ -112,6 +172,14 @@ public class AuthSessionResource {
     /** Sesiones activas propias. */
     @GET
     @RequiresSession
+    @Operation(
+        summary = "Sesiones activas",
+        description = "Sesiones vigentes del propio usuario, con la actual marcada."
+    )
+    @APIResponse(
+        responseCode = "200",
+        description = "Sesiones del usuario.",
+        content = @Content(schema = @Schema(implementation = SessionsResponse.class)))
     public SessionsResponse list() {
         SessionUser user = currentSession.require();
         UUID currentId = currentSession.sessionId().orElse(null);
@@ -127,6 +195,17 @@ public class AuthSessionResource {
     @DELETE
     @Path("/current")
     @RequiresSession
+    @Operation(
+        summary = "Cerrar sesión",
+        description = "Revoca la sesión actual en el servidor y limpia la cookie."
+    )
+    @SecurityRequirementsSet({
+        @SecurityRequirement(name = "sessionCookie"),
+        @SecurityRequirement(name = "csrfHeader")
+    })
+    @APIResponse(
+        responseCode = "204",
+        description = "Sesión cerrada. La cookie se limpia con `Set-Cookie`.")
     public Response close() {
         SessionUser user = currentSession.require();
         logoutUseCase.logout(
@@ -144,7 +223,24 @@ public class AuthSessionResource {
     @DELETE
     @Path("/{id}")
     @RequiresSession
-    public Response revoke(@PathParam("id") UUID id) {
+    @Operation(
+        summary = "Revocar una sesión",
+        description = "Revoca una sesión concreta. Solo su dueño o un administrador."
+    )
+    @SecurityRequirementsSet({
+        @SecurityRequirement(name = "sessionCookie"),
+        @SecurityRequirement(name = "csrfHeader")
+    })
+    @APIResponses({
+        @APIResponse(responseCode = "204", description = "Sesión revocada."),
+        @APIResponse(
+            responseCode = "404",
+            description = "La sesión no existe o no es del usuario.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response revoke(
+        @Parameter(description = "Identificador de la sesión.", required = true) @PathParam("id") UUID id
+    ) {
         SessionUser user = currentSession.require();
         boolean revoked = revokeSessionUseCase.revoke(
             user.id(),

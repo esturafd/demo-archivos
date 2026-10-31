@@ -1,5 +1,7 @@
 package me.esturafd.demo.archivos.shared.error.api;
 
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+
 /**
  * Cuerpo uniforme de error.
  *
@@ -10,5 +12,22 @@ package me.esturafd.demo.archivos.shared.error.api;
  * @param message   mensaje para el usuario final, sin detalles internos
  * @param requestId identificador de la petición, para correlacionar con los registros
  */
-public record ApiError(String code, String message, String requestId) {
+@Schema(
+    name = "ApiError",
+    description = "Cuerpo uniforme de error. Todas las respuestas de error tienen esta forma."
+)
+public record ApiError(
+    @Schema(
+        description = "Código estable de error, pensado para que el cliente decida.",
+        example = "not_found")
+    String code,
+    @Schema(
+        description = "Mensaje para el usuario final, sin detalles internos.",
+        example = "El recurso solicitado no está disponible.")
+    String message,
+    @Schema(
+        description = "Identificador de la petición, para correlacionar con los registros.",
+        example = "a1b2c3d4")
+    String requestId
+) {
 }
