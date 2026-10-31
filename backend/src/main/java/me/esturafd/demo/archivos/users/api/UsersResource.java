@@ -15,7 +15,8 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
-import me.esturafd.demo.archivos.shared.security.api.RequiresAdmin;
+import me.esturafd.demo.archivos.shared.security.api.RequiresRole;
+import me.esturafd.demo.archivos.shared.security.application.model.AppRole;
 import me.esturafd.demo.archivos.shared.security.api.RequiresSession;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 import me.esturafd.demo.archivos.users.api.dto.CreateUserRequest;
@@ -41,7 +42,7 @@ import java.util.UUID;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @RequiresSession
-@RequiresAdmin
+@RequiresRole(AppRole.ADMIN)
 public class UsersResource {
 
     @Inject

@@ -22,7 +22,8 @@ import me.esturafd.demo.archivos.areas.application.UpdateAreaUseCase;
 import me.esturafd.demo.archivos.areas.application.model.Area;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
-import me.esturafd.demo.archivos.shared.security.api.RequiresAdmin;
+import me.esturafd.demo.archivos.shared.security.api.RequiresRole;
+import me.esturafd.demo.archivos.shared.security.application.model.AppRole;
 import me.esturafd.demo.archivos.shared.security.api.RequiresSession;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
@@ -33,7 +34,7 @@ import java.util.UUID;
  * Recurso de áreas.
  *
  * <p>Leer exige sesión y RLS acota el alcance. Escribir está reservado al
- * administrador con {@code @RequiresAdmin}; la base lo vuelve a comprobar con
+ * administrador con {@code @RequiresRole(AppRole.ADMIN)}; la base lo vuelve a comprobar con
  * sus políticas. No hay {@code DELETE}: las áreas se desactivan.
  */
 @Path("/api/areas")
@@ -72,7 +73,7 @@ public class AreasResource {
 
     /** Crea un área. Solo el administrador. */
     @POST
-    @RequiresAdmin
+    @RequiresRole(AppRole.ADMIN)
     public Response create(@Valid CreateAreaRequest request) {
         SessionUser actor = currentSession.require();
         Area area = createArea.create(
@@ -95,7 +96,7 @@ public class AreasResource {
     /** Edita o desactiva un área. Solo el administrador. */
     @PATCH
     @Path("/{id}")
-    @RequiresAdmin
+    @RequiresRole(AppRole.ADMIN)
     public AreaView update(@PathParam("id") UUID id, @Valid UpdateAreaRequest request) {
         SessionUser actor = currentSession.require();
         Area area = updateArea.update(

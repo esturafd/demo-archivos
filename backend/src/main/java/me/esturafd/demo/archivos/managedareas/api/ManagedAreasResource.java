@@ -15,7 +15,8 @@ import me.esturafd.demo.archivos.managedareas.application.ListManagedAreasUseCas
 import me.esturafd.demo.archivos.managedareas.application.ReplaceManagedAreasUseCase;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
-import me.esturafd.demo.archivos.shared.security.api.RequiresAdmin;
+import me.esturafd.demo.archivos.shared.security.api.RequiresRole;
+import me.esturafd.demo.archivos.shared.security.application.model.AppRole;
 import me.esturafd.demo.archivos.shared.security.api.RequiresSession;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
@@ -24,14 +25,16 @@ import java.util.UUID;
 /**
  * Subrecurso de las áreas gestionadas por un gerente.
  *
- * <p>El administrador ve y reemplaza las de cualquier gerente. Un gerente solo
- * consulta las suyas (RLS); el reemplazo está reservado al administrador, así
- * que un gerente no puede asignarse áreas a sí mismo.
+ * <p>Consultar exige nivel **manager o superior**: el administrador ve las de
+ * cualquier gerente y un gerente solo las suyas (RLS). Reemplazar está reservado
+ * al administrador, así que un gerente no puede asignarse áreas a sí mismo. Un
+ * estándar o jefe de área recibe {@code 403} antes de llegar a la base.
  */
 @Path("/api/users/{id}/managed-areas")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @RequiresSession
+@RequiresRole(AppRole.MANAGER)
 public class ManagedAreasResource {
 
     @Inject
@@ -56,7 +59,7 @@ public class ManagedAreasResource {
 
     /** Reemplaza el conjunto completo. Solo el administrador. */
     @PUT
-    @RequiresAdmin
+    @RequiresRole(AppRole.ADMIN)
     public ManagedAreasResponse replace(
         @PathParam("id") UUID managerId,
         @Valid ManagedAreasRequest request

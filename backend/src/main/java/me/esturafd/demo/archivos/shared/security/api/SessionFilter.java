@@ -10,11 +10,14 @@ import jakarta.ws.rs.container.ResourceInfo;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.ext.Provider;
-import me.esturafd.demo.archivos.shared.security.application.SessionResolutionPort;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
+import me.esturafd.demo.archivos.shared.security.application.SessionResolutionPort;
 import me.esturafd.demo.archivos.shared.security.application.SessionToken;
+import me.esturafd.demo.archivos.shared.security.application.model.AppRole;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,8 +26,11 @@ import java.util.UUID;
  * Resuelve la sesión de cada petición a partir de la cookie.
  *
  * <p>Si hay cookie, la valida contra la base de datos y deja el usuario en
- * {@link CurrentSession}. Si el recurso exige sesión y no la hay, responde
- * {@code 401}. No decide permisos: eso vive en la base de datos.
+ * {@link CurrentSession}. Después aplica las guardas de ruta: {@link
+ * RequiresSession} responde {@code 401} sin sesión, y {@link RequiresRole}
+ * responde {@code 403} si el rol no alcanza el nivel exigido.
+ *
+ * <p>No decide el alcance fino: eso vive en la base de datos.
  *
  * <p>Va marcado con {@code @Blocking} porque consulta la base de datos; así el
  * filtro y el recurso corren en un hilo de trabajo y no bloquean el bucle de
@@ -53,11 +59,20 @@ public class SessionFilter implements ContainerRequestFilter {
     @Override
     public void filter(ContainerRequestContext request) {
         resolveSession(request);
-        if (requiresSession() && currentSession.user().isEmpty()) {
+
+        if (findAnnotation(RequiresSession.class) != null && currentSession.user().isEmpty()) {
             throw ApiException.unauthenticated();
         }
-        if (requiresAdmin() && !currentSession.user().orElseThrow(ApiException::unauthenticated).isAdmin()) {
-            throw ApiException.forbidden();
+
+        RequiresRole requiresRole = findAnnotation(RequiresRole.class);
+        if (requiresRole != null) {
+            SessionUser user = currentSession.user().orElseThrow(ApiException::unauthenticated);
+            boolean allowed = AppRole.from(user.role())
+                .map(role -> role.atLeast(requiresRole.value()))
+                .orElse(false);
+            if (!allowed) {
+                throw ApiException.forbidden();
+            }
         }
     }
 
@@ -78,27 +93,20 @@ public class SessionFilter implements ContainerRequestFilter {
             .ifPresent(user -> currentSession.resolve(user, sessionId, tokenHash));
     }
 
-    private boolean requiresSession() {
+    /** Busca la anotación primero en el método y después en su clase. */
+    private <T extends Annotation> T findAnnotation(Class<T> type) {
         Method method = resourceInfo.getResourceMethod();
         if (method != null) {
-            if (method.isAnnotationPresent(RequiresSession.class)
-                || method.getDeclaringClass().isAnnotationPresent(RequiresSession.class)) {
-                return true;
+            T onMethod = method.getAnnotation(type);
+            if (onMethod != null) {
+                return onMethod;
+            }
+            T onClass = method.getDeclaringClass().getAnnotation(type);
+            if (onClass != null) {
+                return onClass;
             }
         }
         Class<?> resource = resourceInfo.getResourceClass();
-        return resource != null && resource.isAnnotationPresent(RequiresSession.class);
-    }
-
-    private boolean requiresAdmin() {
-        Method method = resourceInfo.getResourceMethod();
-        if (method != null) {
-            if (method.isAnnotationPresent(RequiresAdmin.class)
-                || method.getDeclaringClass().isAnnotationPresent(RequiresAdmin.class)) {
-                return true;
-            }
-        }
-        Class<?> resource = resourceInfo.getResourceClass();
-        return resource != null && resource.isAnnotationPresent(RequiresAdmin.class);
+        return resource == null ? null : resource.getAnnotation(type);
     }
 }

@@ -57,9 +57,11 @@ class ManagedAreasResourceTest extends ApiTestBase {
     }
 
     @Test
-    void unEstandarNoVeLasDeOtroGerente() {
+    void unEstandarNoPuedeConsultarAreasGestionadas() {
         Client other = login(OTHER_EMAIL);
-        assertThat(get(other, MANAGER), hasSize(0));
+        given().cookie("session", other.session())
+            .when().get("/api/users/" + MANAGER + "/managed-areas")
+            .then().statusCode(403);
     }
 
     @Test
