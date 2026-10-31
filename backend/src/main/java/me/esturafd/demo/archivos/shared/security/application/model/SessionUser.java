@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.data.application.model;
+package me.esturafd.demo.archivos.shared.security.application.model;
 
 import java.util.UUID;
 

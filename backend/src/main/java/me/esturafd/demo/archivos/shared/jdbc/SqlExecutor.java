@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.data.infrastructure;
+package me.esturafd.demo.archivos.shared.jdbc;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;

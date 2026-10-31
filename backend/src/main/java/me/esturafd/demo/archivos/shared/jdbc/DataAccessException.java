@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.data.infrastructure;
+package me.esturafd.demo.archivos.shared.jdbc;
 
 /**
  * Fallo al ejecutar una sentencia SQL.

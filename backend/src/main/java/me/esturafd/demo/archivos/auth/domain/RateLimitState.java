@@ -1,4 +1,4 @@
-package me.esturafd.demo.archivos.shared.data.application.model;
+package me.esturafd.demo.archivos.auth.domain;
 
 import java.time.Instant;
 

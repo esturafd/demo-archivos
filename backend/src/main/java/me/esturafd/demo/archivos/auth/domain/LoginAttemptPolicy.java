@@ -1,6 +1,6 @@
 package me.esturafd.demo.archivos.auth.domain;
 
-import me.esturafd.demo.archivos.shared.data.application.model.RateLimitState;
+import me.esturafd.demo.archivos.auth.domain.RateLimitState;
 
 import java.time.Duration;
 import java.time.Instant;

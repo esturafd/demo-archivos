@@ -2,8 +2,8 @@ package me.esturafd.demo.archivos.auth.application;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.data.application.DataMediator;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
+import me.esturafd.demo.archivos.auth.application.AuthDataPort;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
 /**
  * Caso de uso de cierre de sesión.
@@ -15,7 +15,7 @@ import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
 public class LogoutUseCase {
 
     @Inject
-    DataMediator data;
+    AuthDataPort data;
 
     public void logout(SessionUser user, String tokenHash, String requestId, String ipAddress) {
         data.closeSession(user.id(), tokenHash, user.email(), requestId, ipAddress);

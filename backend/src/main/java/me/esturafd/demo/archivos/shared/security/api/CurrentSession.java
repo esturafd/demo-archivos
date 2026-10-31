@@ -1,7 +1,7 @@
 package me.esturafd.demo.archivos.shared.security.api;
 
 import jakarta.enterprise.context.RequestScoped;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 
 import java.util.Optional;

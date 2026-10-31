@@ -1,7 +1,7 @@
 package me.esturafd.demo.archivos.auth.application;
 
 import me.esturafd.demo.archivos.auth.domain.LoginOutcome;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
 import java.util.UUID;
 

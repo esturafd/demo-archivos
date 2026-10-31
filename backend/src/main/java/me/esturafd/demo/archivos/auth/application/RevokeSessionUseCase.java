@@ -2,7 +2,7 @@ package me.esturafd.demo.archivos.auth.application;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.data.application.DataMediator;
+import me.esturafd.demo.archivos.auth.application.AuthDataPort;
 
 import java.util.UUID;
 
@@ -16,7 +16,7 @@ import java.util.UUID;
 public class RevokeSessionUseCase {
 
     @Inject
-    DataMediator data;
+    AuthDataPort data;
 
     public boolean revoke(UUID actorUserId, UUID sessionId, String requestId, String ipAddress) {
         return data.revokeUserSession(actorUserId, sessionId, requestId, ipAddress);

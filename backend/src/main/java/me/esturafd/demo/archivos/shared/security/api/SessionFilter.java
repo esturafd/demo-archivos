@@ -10,7 +10,7 @@ import jakarta.ws.rs.container.ResourceInfo;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.ext.Provider;
-import me.esturafd.demo.archivos.shared.data.application.DataMediator;
+import me.esturafd.demo.archivos.shared.security.application.SessionResolutionPort;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.application.SessionToken;
@@ -36,7 +36,7 @@ import java.util.UUID;
 public class SessionFilter implements ContainerRequestFilter {
 
     @Inject
-    DataMediator data;
+    SessionResolutionPort sessions;
 
     @Inject
     RequestContext context;
@@ -65,13 +65,13 @@ public class SessionFilter implements ContainerRequestFilter {
         }
 
         String tokenHash = SessionToken.hash(cookie.getValue());
-        Optional<UUID> userId = data.validateSessionToken(tokenHash);
+        Optional<UUID> userId = sessions.validateToken(tokenHash);
         if (userId.isEmpty()) {
             return;
         }
 
-        UUID sessionId = data.findSessionIdForToken(tokenHash).orElse(null);
-        data.findSessionUser(userId.get(), context.requestId(), context.clientIp())
+        UUID sessionId = sessions.findSessionId(tokenHash).orElse(null);
+        sessions.findUser(userId.get(), context.requestId(), context.clientIp())
             .ifPresent(user -> currentSession.resolve(user, sessionId, tokenHash));
     }
 

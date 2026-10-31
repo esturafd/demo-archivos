@@ -1,6 +1,6 @@
 package me.esturafd.demo.archivos.auth.api.dto;
 
-import me.esturafd.demo.archivos.shared.data.application.model.SessionSummary;
+import me.esturafd.demo.archivos.auth.application.model.SessionSummary;
 
 import java.time.Instant;
 import java.util.UUID;

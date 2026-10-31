@@ -2,8 +2,8 @@ package me.esturafd.demo.archivos.auth.application;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.data.application.DataMediator;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionSummary;
+import me.esturafd.demo.archivos.auth.application.AuthDataPort;
+import me.esturafd.demo.archivos.auth.application.model.SessionSummary;
 
 import java.util.List;
 import java.util.Optional;
@@ -16,7 +16,7 @@ import java.util.UUID;
 public class QuerySessions {
 
     @Inject
-    DataMediator data;
+    AuthDataPort data;
 
     public List<SessionSummary> list(UUID userId, String requestId, String ipAddress) {
         return data.listUserSessions(userId, requestId, ipAddress);

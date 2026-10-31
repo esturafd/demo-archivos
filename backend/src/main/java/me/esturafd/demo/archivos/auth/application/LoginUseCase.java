@@ -4,11 +4,12 @@ import io.quarkus.elytron.security.common.BcryptUtil;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import me.esturafd.demo.archivos.auth.domain.LoginAttemptPolicy;
-import me.esturafd.demo.archivos.shared.data.application.DataMediator;
-import me.esturafd.demo.archivos.shared.data.application.model.LoginUser;
-import me.esturafd.demo.archivos.shared.data.application.model.RateLimitState;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
+import me.esturafd.demo.archivos.auth.application.AuthDataPort;
+import me.esturafd.demo.archivos.auth.application.model.LoginUser;
+import me.esturafd.demo.archivos.auth.domain.RateLimitState;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
+import me.esturafd.demo.archivos.shared.security.application.SessionResolutionPort;
 import me.esturafd.demo.archivos.shared.security.application.SessionToken;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -37,7 +38,10 @@ public class LoginUseCase {
         "$2a$10$Uc.SZ0hvGJQlYdsAp7be1.lFjmOnc7aAr4L0YY3/VN3oK.F8zJHRG";
 
     @Inject
-    DataMediator data;
+    AuthDataPort data;
+
+    @Inject
+    SessionResolutionPort sessions;
 
     @Inject
     LoginAttemptKey attemptKey;
@@ -107,7 +111,7 @@ public class LoginUseCase {
         );
         data.clearRateLimit(keyHash, requestId, ipAddress);
 
-        SessionUser sessionUser = data.findSessionUser(user.id(), requestId, ipAddress)
+        SessionUser sessionUser = sessions.findUser(user.id(), requestId, ipAddress)
             .orElseThrow(() -> ApiException.internalError(
                 new IllegalStateException("La sesión recién creada no resolvió a su usuario")));
 

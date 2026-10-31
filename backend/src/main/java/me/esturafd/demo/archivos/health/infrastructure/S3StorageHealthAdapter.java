@@ -1,23 +1,22 @@
-package me.esturafd.demo.archivos.shared.storage.infrastructure;
+package me.esturafd.demo.archivos.health.infrastructure;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import me.esturafd.demo.archivos.shared.storage.application.StorageMediator;
+import me.esturafd.demo.archivos.health.application.StorageHealthPort;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.s3.S3Client;
 
 /**
- * Implementación del mediador de almacenamiento sobre la API S3.
+ * Comprueba el almacenamiento con una petición mínima al bucket.
  *
- * <p>Es la única clase que conoce el endpoint, el bucket y las credenciales. Hablar S3 en lugar
- * del SDK de un proveedor concreto permite cambiar de servicio sin tocar los casos de uso: el
- * proveedor actual expone la API S3.
+ * <p>Es el adaptador propio de `health`: no dice nada sobre subir o descargar
+ * objetos, solo si el proveedor responde.
  */
 @ApplicationScoped
-public class S3StorageMediator implements StorageMediator {
+public class S3StorageHealthAdapter implements StorageHealthPort {
 
-    private static final Logger LOG = Logger.getLogger(S3StorageMediator.class);
+    private static final Logger LOG = Logger.getLogger(S3StorageHealthAdapter.class);
 
     @Inject
     S3Client s3;

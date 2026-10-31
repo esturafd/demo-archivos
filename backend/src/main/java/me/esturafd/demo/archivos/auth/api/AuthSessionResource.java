@@ -26,7 +26,7 @@ import me.esturafd.demo.archivos.auth.application.LoginUseCase;
 import me.esturafd.demo.archivos.auth.application.LogoutUseCase;
 import me.esturafd.demo.archivos.auth.application.QuerySessions;
 import me.esturafd.demo.archivos.auth.application.RevokeSessionUseCase;
-import me.esturafd.demo.archivos.shared.data.application.model.SessionUser;
+import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.request.application.RequestContext;
 import me.esturafd.demo.archivos.shared.security.api.CurrentSession;
