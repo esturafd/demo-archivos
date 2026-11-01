@@ -15,6 +15,8 @@ dependencies {
     implementation 'io.quarkus:quarkus-jdbc-postgresql'
     implementation 'io.quarkiverse.amazonservices:quarkus-amazon-s3'
     implementation 'io.quarkus:quarkus-smallrye-health'
+    // Registros estructurados en JSON, con el identificador de petición (MDC).
+    implementation 'io.quarkus:quarkus-logging-json'
     // Seguridad: bcrypt para las contraseñas. El CSRF se resuelve con un filtro
     // propio para conservar el formato uniforme de error.
     implementation 'io.quarkus:quarkus-elytron-security-common'
