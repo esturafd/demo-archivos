@@ -1,8 +1,8 @@
 package me.esturafd.demo.archivos.auth.application;
 
 import me.esturafd.demo.archivos.auth.application.model.LoginUser;
+import me.esturafd.demo.archivos.auth.application.model.RateLimitCheck;
 import me.esturafd.demo.archivos.auth.application.model.SessionSummary;
-import me.esturafd.demo.archivos.auth.domain.RateLimitState;
 
 import java.time.Duration;
 import java.util.List;
@@ -56,8 +56,12 @@ public interface AuthDataPort {
     /** Revoca una sesión concreta; solo su dueño o un administrador. */
     boolean revokeUserSession(UUID actorUserId, UUID sessionId, String requestId, String ipAddress);
 
-    /** Estado actual del limitador de intentos. */
-    Optional<RateLimitState> findRateLimit(String keyHash, String requestId, String ipAddress);
+    /**
+     * Estado actual del limitador, junto con la hora de la base con la que
+     * evaluarlo. Devolver la hora evita comparar el reloj de la aplicación con el
+     * de la base: toda la decisión usa un único reloj.
+     */
+    RateLimitCheck findRateLimit(String keyHash, String requestId, String ipAddress);
 
     /** Suma un intento fallido, reiniciando la ventana si expiró. */
     void recordFailedAttempt(String keyHash, Duration window, String requestId, String ipAddress);

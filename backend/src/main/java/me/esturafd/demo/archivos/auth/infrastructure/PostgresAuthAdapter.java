@@ -4,6 +4,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import me.esturafd.demo.archivos.auth.application.AuthDataPort;
 import me.esturafd.demo.archivos.auth.application.model.LoginUser;
+import me.esturafd.demo.archivos.auth.application.model.RateLimitCheck;
 import me.esturafd.demo.archivos.auth.application.model.SessionSummary;
 import me.esturafd.demo.archivos.auth.domain.RateLimitState;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
@@ -119,12 +120,17 @@ public class PostgresAuthAdapter implements AuthDataPort {
     }
 
     @Override
-    public Optional<RateLimitState> findRateLimit(String keyHash, String requestId, String ipAddress) {
+    public RateLimitCheck findRateLimit(String keyHash, String requestId, String ipAddress) {
+        // Una sola consulta: el LEFT JOIN garantiza una fila aunque no haya
+        // intentos, y now() entrega la hora de la base con la que comparar la
+        // ventana. Así no se mezclan el reloj de la aplicación y el de la base.
         return database.inConnection(sql -> sql.queryOne("""
-            SELECT failed_count, window_started_at, blocked_until
-              FROM app.login_rate_limits
-             WHERE key_hash = ?
-            """, PostgresAuthAdapter::mapRateLimit, keyHash));
+            SELECT l.failed_count, l.window_started_at, l.blocked_until, now() AS checked_at
+              FROM (SELECT now()) AS t
+              LEFT JOIN app.login_rate_limits l ON l.key_hash = ?
+            """, PostgresAuthAdapter::mapRateLimitCheck, keyHash))
+            .orElseThrow(() -> ApiException.internalError(
+                new IllegalStateException("La consulta del limitador no devolvió fila")));
     }
 
     @Override
@@ -201,11 +207,20 @@ public class PostgresAuthAdapter implements AuthDataPort {
         );
     }
 
-    private static RateLimitState mapRateLimit(ResultSet rows) throws SQLException {
-        return new RateLimitState(
-            rows.getInt("failed_count"),
-            instant(rows, "window_started_at"),
-            instant(rows, "blocked_until")
+    private static RateLimitCheck mapRateLimitCheck(ResultSet rows) throws SQLException {
+        Instant checkedAt = instant(rows, "checked_at");
+        Instant windowStartedAt = instant(rows, "window_started_at");
+        // Sin fila en el limitador, el LEFT JOIN deja las columnas a null.
+        if (windowStartedAt == null) {
+            return new RateLimitCheck(null, checkedAt);
+        }
+        return new RateLimitCheck(
+            new RateLimitState(
+                rows.getInt("failed_count"),
+                windowStartedAt,
+                instant(rows, "blocked_until")
+            ),
+            checkedAt
         );
     }
 

@@ -6,7 +6,7 @@ import jakarta.inject.Inject;
 import me.esturafd.demo.archivos.auth.domain.LoginAttemptPolicy;
 import me.esturafd.demo.archivos.auth.application.AuthDataPort;
 import me.esturafd.demo.archivos.auth.application.model.LoginUser;
-import me.esturafd.demo.archivos.auth.domain.RateLimitState;
+import me.esturafd.demo.archivos.auth.application.model.RateLimitCheck;
 import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
 import me.esturafd.demo.archivos.shared.security.application.SessionResolutionPort;
@@ -14,7 +14,6 @@ import me.esturafd.demo.archivos.shared.security.application.SessionToken;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -63,10 +62,10 @@ public class LoginUseCase {
         String requestId
     ) {
         String keyHash = attemptKey.of(email, ipAddress);
-        RateLimitState state = data.findRateLimit(keyHash, requestId, ipAddress).orElse(null);
+        RateLimitCheck check = data.findRateLimit(keyHash, requestId, ipAddress);
 
         LoginAttemptPolicy policy = new LoginAttemptPolicy(maxAttempts, window);
-        if (policy.isBlocked(state, Instant.now())) {
+        if (policy.isBlocked(check.state(), check.checkedAt())) {
             data.recordFailedLogin(email, null, "bloqueado", requestId, ipAddress);
             return LoginResult.tooManyAttempts();
         }
