@@ -1,5 +1,5 @@
 import type { FileOwner } from '@/files/domain/file'
-import { SearchField } from '@/files/ui/SearchField'
+import { SearchField } from '@/shared/ui/SearchField'
 
 interface FilesToolbarProps {
   /** Si el rol puede ver archivos de otros; si no, el selector no aparece. */

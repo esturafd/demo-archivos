@@ -1,5 +1,5 @@
 import '@/files/ui/files.css'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useFileOwners } from '@/files/application/useFileOwners'
 import { useFiles } from '@/files/application/useFiles'
@@ -9,6 +9,7 @@ import { FileTable } from '@/files/ui/FileTable'
 import { FilesToolbar } from '@/files/ui/FilesToolbar'
 import { UploadFileDialog } from '@/files/ui/UploadFileDialog'
 import { filesAdapter } from '@/files/infrastructure/FilesHttpAdapter'
+import { useUpdateSearchParams } from '@/shared/routing/useUpdateSearchParams'
 import { hasAtLeastRole } from '@/shared/session/roles'
 import { useSession } from '@/shared/session/sessionContext'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -18,7 +19,7 @@ import { PageLoading } from '@/shared/ui/PageLoading'
 /** Página de archivos: listado, búsqueda, carga y eliminación. */
 export function FilesPage() {
   const { user } = useSession()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
 
   // El cursor no es reutilizable hacia atrás, así que se guarda la pila de la
   // sesión de navegación; la URL conserva la página actual, que es lo que se comparte.
@@ -40,26 +41,7 @@ export function FilesPage() {
   })
   const owners = useFileOwners(canSeeOthers)
 
-  const updateParams = useMemo(
-    () =>
-      (next: Record<string, string | null>) => {
-        setSearchParams(
-          (previous) => {
-            const params = new URLSearchParams(previous)
-            for (const [key, value] of Object.entries(next)) {
-              if (value === null || value === '') {
-                params.delete(key)
-              } else {
-                params.set(key, value)
-              }
-            }
-            return params
-          },
-          { replace: false },
-        )
-      },
-    [setSearchParams],
-  )
+  const updateParams = useUpdateSearchParams()
 
   if (!user) {
     return null

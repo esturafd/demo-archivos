@@ -26,6 +26,7 @@
   --color-danger-strong: hsl(342 58% 38%);
   --color-danger-soft: hsl(342 60% 96%);
   --color-success: hsl(160 42% 34%);
+  --color-success-soft: hsl(160 45% 94%);
 
   --radius: 8px;
   --radius-lg: 14px;

@@ -4,6 +4,7 @@ import { ComingSoonPage } from '@/app/pages/ComingSoonPage'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { LoginPage } from '@/auth/ui/LoginPage'
 import { FilesPage } from '@/files/ui/FilesPage'
+import { UsersPage } from '@/users/ui/UsersPage'
 import { RequireRole, RequireSession } from '@/shared/session/guards'
 
 export const router = createBrowserRouter([
@@ -31,7 +32,7 @@ export const router = createBrowserRouter([
         path: 'usuarios',
         element: (
           <RequireRole role="admin">
-            <ComingSoonPage title="Usuarios" />
+            <UsersPage />
           </RequireRole>
         ),
       },

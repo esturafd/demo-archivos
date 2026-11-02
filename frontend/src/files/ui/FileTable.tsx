@@ -13,7 +13,7 @@ interface FileTableProps {
 /** Tabla de archivos. Cada fila ofrece descargar y eliminar. */
 export function FileTable({ items, contentUrl, onDelete }: FileTableProps) {
   return (
-    <table className="files">
+    <table className="data-table">
       <thead>
         <tr>
           <th>Nombre</th>
