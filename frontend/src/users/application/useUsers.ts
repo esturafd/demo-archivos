@@ -4,10 +4,11 @@ import { usersKeys } from '@/users/application/usersKeys'
 import { usersAdapter } from '@/users/infrastructure/UsersHttpAdapter'
 
 /** Caso de uso: listar y buscar usuarios. */
-export function useUsers(params: ListUsersParams) {
+export function useUsers(params: ListUsersParams, enabled = true) {
   return useQuery({
     queryKey: usersKeys.list(params),
     queryFn: () => usersAdapter.list(params),
     placeholderData: (previous) => previous,
+    enabled,
   })
 }

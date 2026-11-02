@@ -1,0 +1,26 @@
+/* Estilos propios del módulo `managedareas`. Se importan desde la propia página. */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px;
+}
+.chip {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.chip--off {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+}
+
+.checklist {
+  display: grid;
+  gap: 8px;
+}

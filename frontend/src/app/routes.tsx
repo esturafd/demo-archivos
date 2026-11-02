@@ -4,6 +4,7 @@ import { ComingSoonPage } from '@/app/pages/ComingSoonPage'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { LoginPage } from '@/auth/ui/LoginPage'
 import { FilesPage } from '@/files/ui/FilesPage'
+import { ManagedAreasPage } from '@/managedareas/ui/ManagedAreasPage'
 import { UsersPage } from '@/users/ui/UsersPage'
 import { RequireRole, RequireSession } from '@/shared/session/guards'
 
@@ -24,7 +25,7 @@ export const router = createBrowserRouter([
         path: 'areas-gestionadas',
         element: (
           <RequireRole role="manager">
-            <ComingSoonPage title="Áreas gestionadas" />
+            <ManagedAreasPage />
           </RequireRole>
         ),
       },
