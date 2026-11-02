@@ -1,0 +1,222 @@
+# Integración y despliegue continuos del backend.
+#
+# En `main`, cuando cambia algo del backend:
+#   1. test     -> pruebas de la API en JVM.
+#   2. migrate  -> migraciones de Flyway (deja el esquema al día ANTES de desplegar).
+#   3. deploy   -> compila el binario nativo, construye y publica la imagen en
+#                  Artifact Registry y despliega en Cloud Run; verifica la salud.
+#
+# Requisitos previos, una sola vez por ambiente:
+#   - El ambiente productivo se prepara con `backend/configure-environment.sh`
+#     (APIs, Artifact Registry, cuentas de servicio, Workload Identity,
+#     secretos, IAM y el servicio Cloud Run con sus variables y secretos).
+#   - El esquema de la base de datos lo mantiene el flujo de la base de datos
+#     (`database-deploy.yml`) además de la migración de este flujo.
+#
+# Secretos y variables: ver la tabla al final del archivo.
+
+name: Backend (build nativo + Cloud Run)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+
+# Solo lee el repositorio. El job de despliegue pide además el token OIDC.
+permissions:
+  contents: read
+
+# Nunca dos despliegues del backend a la vez; si llega otro push, se encola.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Pruebas de la API (JVM, con Dev Services)
+  # ---------------------------------------------------------------------------
+  test:
+    name: Pruebas (JVM)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            backend/gradle/wrapper/gradle-wrapper.properties
+            backend/**/*.gradle*
+
+      - name: Ejecutar las pruebas
+        run: ./gradlew test --console=plain
+
+  # ---------------------------------------------------------------------------
+  # 2. Migraciones (Flyway) sobre la base de producción
+  # ---------------------------------------------------------------------------
+  migrate:
+    name: Migraciones (Flyway)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: test
+    env:
+      FLYWAY_URL: ${{ vars.FLYWAY_URL }}
+      FLYWAY_USER: ${{ vars.FLYWAY_USER }}
+      FLYWAY_DEFAULT_SCHEMA: flyway
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CONNECT_RETRIES: "30"
+      FLYWAY_IMAGE: ${{ vars.FLYWAY_IMAGE || 'flyway/flyway:13.11.1' }}
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Comprobar la configuración
+        env:
+          FLYWAY_PASSWORD: ${{ secrets.FLYWAY_PASSWORD }}
+        run: |
+          missing=""
+          for name in FLYWAY_URL FLYWAY_USER; do
+            if [ -z "${!name}" ]; then missing="${missing} ${name}"; fi
+          done
+          if [ -z "${FLYWAY_PASSWORD}" ]; then missing="${missing} FLYWAY_PASSWORD"; fi
+          if [ -n "${missing}" ]; then
+            echo "::error::Falta configuración para Flyway:${missing}"
+            exit 1
+          fi
+
+      - name: Aplicar las migraciones
+        env:
+          FLYWAY_PASSWORD: ${{ secrets.FLYWAY_PASSWORD }}
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/database/migrations:/flyway/sql:ro" \
+            --env FLYWAY_URL \
+            --env FLYWAY_USER \
+            --env FLYWAY_PASSWORD \
+            --env FLYWAY_DEFAULT_SCHEMA \
+            --env FLYWAY_LOCATIONS \
+            --env FLYWAY_CONNECT_RETRIES \
+            "${FLYWAY_IMAGE}" migrate
+
+  # ---------------------------------------------------------------------------
+  # 3. Binario nativo, imagen y despliegue en Cloud Run
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Build nativo y despliegue
+    runs-on: ubuntu-latest
+    environment: production
+    needs: [test, migrate]
+    permissions:
+      contents: read
+      id-token: write          # imprescindible para Workload Identity
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.GCP_SERVICE }}
+      REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Autenticar en Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Preparar gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            backend/gradle/wrapper/gradle-wrapper.properties
+            backend/**/*.gradle*
+
+      - name: Permitir a Docker autenticarse en Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # -Ob reduce el uso de memoria del compilador nativo. En un runner con
+      # mucha memoria puede quitarse para optimizar más el binario.
+      - name: Compilar el binario nativo
+        working-directory: backend
+        run: |
+          ./gradlew nativeBuild -x test \
+            -Dquarkus.native.additional-build-args=-Ob \
+            --console=plain
+
+      - name: Construir la imagen de contenedor
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/backend:${GITHUB_SHA}"
+          docker build \
+            -f backend/src/main/docker/Dockerfile.native \
+            -t "${IMAGE}" \
+            backend
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Publicar la imagen
+        run: docker push "${IMAGE}"
+
+      # No se pasan variables ni secretos: el servicio los tiene configurados
+      # (los puso configure-environment.sh) y `gcloud run deploy` los conserva.
+      - name: Desplegar en Cloud Run
+        run: |
+          gcloud run deploy "${SERVICE}" \
+            --project "${PROJECT}" \
+            --region "${REGION}" \
+            --image "${IMAGE}" \
+            --port 8080 \
+            --min-instances 0 \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Verificar la salud
+        run: |
+          URL="$(gcloud run services describe "${SERVICE}" \
+            --project "${PROJECT}" \
+            --region "${REGION}" \
+            --format='value(status.url)')"
+          echo "Servicio desplegado en: ${URL}"
+          for path in /health/live /health/ready; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "${URL}${path}")"
+            echo "${path} -> ${code}"
+            if [ "${code}" != "200" ]; then
+              echo "::error::Salud '${path}' respondió ${code}"
+              exit 1
+            fi
+          done
+
+# -----------------------------------------------------------------------------
+# Secretos y variables (Settings > Environments > `production`)
+# -----------------------------------------------------------------------------
+#
+#   Nombre                              Tipo      Contenido
+#   ----------------------------------  --------  ------------------------------
+#   NEON_API_KEY                        secreto   (del flujo de base de datos)
+#   FLYWAY_PASSWORD                     secreto   contraseña de app_migrator
+#   NEON_PROJECT_ID, NEON_BRANCH        variable  (del flujo de base de datos)
+#   FLYWAY_URL, FLYWAY_USER             variable  (del flujo de base de datos)
+#   FLYWAY_IMAGE                        variable  opcional
+#   GCP_PROJECT_ID                      variable  id del proyecto
+#   GCP_REGION                          variable  p. ej. us-central1
+#   GCP_SERVICE                         variable  nombre del servicio Cloud Run
+#   GCP_ARTIFACT_REPO                   variable  repositorio de Artifact Registry
+#   GCP_WORKLOAD_IDENTITY_PROVIDER      variable  recurso del proveedor WIF
+#   GCP_SERVICE_ACCOUNT                 variable  email de la cuenta de despliegue
+#
+# No hay secretos de la aplicación: sus valores viven en Secret Manager y Cloud
+# Run los referencia; el flujo solo usa Workload Identity para desplegar.

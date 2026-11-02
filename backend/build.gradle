@@ -1,0 +1,99 @@
+plugins {
+    id 'java'
+    id 'io.quarkus'
+    id 'eclipse'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    // Transporte HTTP del SDK de AWS. La extensión de S3 no arranca sin uno.
+    implementation 'software.amazon.awssdk:url-connection-client'
+    implementation 'io.quarkus:quarkus-jdbc-postgresql'
+    implementation 'io.quarkiverse.amazonservices:quarkus-amazon-s3'
+    implementation 'io.quarkus:quarkus-smallrye-health'
+    // Registros estructurados en JSON, con el identificador de petición (MDC).
+    implementation 'io.quarkus:quarkus-logging-json'
+    // Seguridad: bcrypt para las contraseñas. El CSRF se resuelve con un filtro
+    // propio para conservar el formato uniforme de error.
+    implementation 'io.quarkus:quarkus-elytron-security-common'
+    implementation enforcedPlatform("${quarkusPlatformGroupId}:quarkus-amazon-services-bom:${quarkusPlatformVersion}")
+    implementation 'io.quarkus:quarkus-hibernate-validator'
+    implementation 'io.quarkus:quarkus-rest-jackson'
+    implementation 'io.quarkus:quarkus-smallrye-openapi'
+    implementation enforcedPlatform("${quarkusPlatformGroupId}:${quarkusPlatformArtifactId}:${quarkusPlatformVersion}")
+    implementation 'io.quarkus:quarkus-arc'
+    implementation 'io.quarkus:quarkus-rest'
+    testImplementation 'io.quarkus:quarkus-junit'
+    testImplementation 'io.rest-assured:rest-assured'
+}
+
+group = 'me.esturafd.demo.archivos'
+version = '1.0.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+compileTestJava {
+    options.encoding = 'UTF-8'
+}
+
+// Las pruebas del backend aplican el mismo esquema que producción. Las
+// migraciones se copian al classpath en vez de duplicarlas, para que sigan
+// siendo la única fuente de verdad.
+tasks.named('processTestResources') {
+    from('../database/migrations') {
+        into 'db/migration'
+    }
+}
+
+// Las pruebas de archivos manejan contenido de hasta 20 MB, así que se amplía el
+// montón del proceso de pruebas.
+tasks.named('test') {
+    maxHeapSize = '1g'
+}
+
+// Las pruebas de integración (*IT) viven en su propio source set y se ejecutan
+// contra el artefacto empaquetado, no en la tarea `test`: en JVM con
+// `quarkusIntTest` y sobre el binario nativo con `nativeTest`. Comparten el
+// soporte de pruebas (siembra y utilidades) y las migraciones.
+sourceSets {
+    integrationTest {
+        compileClasspath += sourceSets.test.output
+        runtimeClasspath += sourceSets.test.output
+    }
+}
+
+tasks.named('processIntegrationTestResources') {
+    from('../database/migrations') {
+        into 'db/migration'
+    }
+}
+
+tasks.register('nativeBuild') {
+    group = 'build'
+    description = 'Compila el ejecutable nativo usando un contenedor.'
+    dependsOn tasks.named('build')
+}
+
+// Las propiedades deben fijarse en la fase de configuración, antes de que el
+// plugin de Quarkus las lea; por eso no se hace en `whenReady` ni en `doFirst`.
+def nativeRequested = gradle.startParameter.taskNames.any {
+    it == 'nativeBuild' || it.endsWith(':nativeBuild')
+}
+
+if (nativeRequested) {
+    System.setProperty('quarkus.native.enabled', 'true')
+    System.setProperty('quarkus.native.container-build', 'true')
+}
+

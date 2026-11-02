@@ -1,5 +1,16 @@
+# Neon
 .neon
 node_modules/
 .env
+.env.deploy
+
+# Script automatizados
 __pycache__/
 *.pyc
+
+# Quarkus
+.quarkus/
+
+# Otros
+.DS_Store
+
