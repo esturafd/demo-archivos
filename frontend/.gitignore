@@ -1,0 +1,10 @@
+# Dependencias y salida de la compilación
+node_modules/
+dist/
+*.local
+coverage/
+.vite/
+
+# Variables de entorno locales (la API base, por ejemplo)
+.env
+.env.local
