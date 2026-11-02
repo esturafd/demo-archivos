@@ -39,7 +39,13 @@ public class CsrfFilter implements ContainerRequestFilter, ContainerResponseFilt
     /** Métodos que no modifican estado y, por tanto, no exigen token. */
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS", "TRACE");
 
-    private static final SecureRandom RANDOM = new SecureRandom();
+    /**
+     * Generador seguro, creado en la primera llamada.
+     *
+     * <p>No se inicializa en el arranque de la clase para no incrustar un
+     * {@code SecureRandom} en el montón de la imagen nativa.
+     */
+    private static volatile SecureRandom random;
 
     @ConfigProperty(name = "app.auth.csrf.cookie-name", defaultValue = "csrf-token")
     String cookieName;
@@ -76,7 +82,7 @@ public class CsrfFilter implements ContainerRequestFilter, ContainerResponseFilt
 
     private String newCookie() {
         byte[] bytes = new byte[TOKEN_BYTES];
-        RANDOM.nextBytes(bytes);
+        random().nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 
         // Sin HttpOnly: el cliente debe poder leerla para reenviarla en la
@@ -95,5 +101,19 @@ public class CsrfFilter implements ContainerRequestFilter, ContainerResponseFilt
             first.getBytes(StandardCharsets.UTF_8),
             second.getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    private static SecureRandom random() {
+        SecureRandom current = random;
+        if (current == null) {
+            synchronized (CsrfFilter.class) {
+                current = random;
+                if (current == null) {
+                    current = new SecureRandom();
+                    random = current;
+                }
+            }
+        }
+        return current;
     }
 }

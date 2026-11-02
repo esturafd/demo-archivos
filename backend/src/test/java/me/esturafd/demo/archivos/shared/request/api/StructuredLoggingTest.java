@@ -39,6 +39,8 @@ class StructuredLoggingTest extends ApiTestBase {
         assertThat(line.trim(), org.hamcrest.Matchers.startsWith("{"));
         assertThat(line, containsString("\"requestId\":\"" + requestId + "\""));
         assertThat(line, containsString("\"level\""));
+        // Plano, no anidado bajo "mdc".
+        assertThat(line, not(containsString("\"mdc\":{\"requestId\"")));
     }
 
     @Test

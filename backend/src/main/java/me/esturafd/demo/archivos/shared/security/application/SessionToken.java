@@ -19,7 +19,14 @@ public final class SessionToken {
     /** 256 bits de entropía: suficiente para que el token sea impredecible. */
     private static final int TOKEN_BYTES = 32;
 
-    private static final SecureRandom RANDOM = new SecureRandom();
+    /**
+     * Generador seguro, creado en la primera llamada.
+     *
+     * <p>No se inicializa en el arranque de la clase porque en la imagen nativa un
+     * {@code SecureRandom} en un campo estático quedaría incrustado en el montón
+     * de la imagen con su semilla. Creándolo en tiempo de ejecución se evita.
+     */
+    private static volatile SecureRandom random;
 
     private SessionToken() {
     }
@@ -27,8 +34,22 @@ public final class SessionToken {
     /** Token opaco, seguro para una URL y una cookie. */
     public static String generate() {
         byte[] bytes = new byte[TOKEN_BYTES];
-        RANDOM.nextBytes(bytes);
+        random().nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static SecureRandom random() {
+        SecureRandom current = random;
+        if (current == null) {
+            synchronized (SessionToken.class) {
+                current = random;
+                if (current == null) {
+                    current = new SecureRandom();
+                    random = current;
+                }
+            }
+        }
+        return current;
     }
 
     /** Resumen SHA-256 en hexadecimal, tal como lo exige {@code app.sessions}. */
