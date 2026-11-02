@@ -1,9 +1,9 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { NavLink, useNavigate } from 'react-router'
+import { useState } from 'react'
+import { NavLink } from 'react-router'
 import { NAV_ITEMS } from '@/app/layout/navItems'
+import { useLogout } from '@/auth/application/useLogout'
+import { SessionsDialog } from '@/auth/ui/SessionsDialog'
 import type { AppRole } from '@/shared/session/model'
-import { logout } from '@/shared/session/sessionApi'
-import { SESSION_QUERY_KEY } from '@/shared/session/SessionProvider'
 import { useSession } from '@/shared/session/sessionContext'
 import { hasAtLeastRole } from '@/shared/session/roles'
 
@@ -26,16 +26,8 @@ function initials(name: string): string {
 /** Barra lateral: marca, usuario arriba y navegación por módulo. */
 export function Sidebar() {
   const { user } = useSession()
-  const queryClient = useQueryClient()
-  const navigate = useNavigate()
-
-  const logoutMutation = useMutation({
-    mutationFn: logout,
-    onSettled: () => {
-      queryClient.setQueryData(SESSION_QUERY_KEY, null)
-      navigate('/login', { replace: true })
-    },
-  })
+  const logout = useLogout()
+  const [sessionsOpen, setSessionsOpen] = useState(false)
 
   if (!user) {
     return null
@@ -53,13 +45,19 @@ export function Sidebar() {
         <span data-testid="brand-name">Archivos</span>
       </div>
 
-      <div className="user-card">
+      <button
+        type="button"
+        className="user-card"
+        onClick={() => setSessionsOpen(true)}
+        aria-haspopup="dialog"
+        title="Ver sesiones activas"
+      >
         <span className="user-card__avatar" aria-hidden="true">{initials(user.name)}</span>
         <span className="user-card__who">
           <span className="user-card__name">{user.name}</span>
           <span className="user-card__role">{ROLE_LABEL[user.role]}</span>
         </span>
-      </div>
+      </button>
 
       <nav className="nav" aria-label="Principal">
         <span className="nav__label">General</span>
@@ -76,12 +74,14 @@ export function Sidebar() {
         <button
           type="button"
           className="logout"
-          onClick={() => logoutMutation.mutate()}
-          disabled={logoutMutation.isPending}
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
         >
           Cerrar sesión
         </button>
       </div>
+
+      <SessionsDialog open={sessionsOpen} onClose={() => setSessionsOpen(false)} />
     </aside>
   )
 }

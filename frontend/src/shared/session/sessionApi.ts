@@ -21,8 +21,3 @@ export async function fetchCurrentUser(): Promise<SessionUser | null> {
     throw error
   }
 }
-
-/** Cierra la sesión actual en el servidor (revoca la sesión, no solo la cookie). */
-export async function logout(): Promise<void> {
-  await httpClient.delete('/auth/sessions/current')
-}
