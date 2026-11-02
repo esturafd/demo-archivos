@@ -14,3 +14,6 @@ __pycache__/
 # Otros
 .DS_Store
 
+# Imágenes Docker descargadas (artefactos locales)
+/dist/
+

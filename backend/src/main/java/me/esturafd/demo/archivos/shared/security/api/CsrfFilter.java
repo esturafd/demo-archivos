@@ -10,6 +10,7 @@ import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.ext.Provider;
 import me.esturafd.demo.archivos.shared.error.application.ApiException;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.nio.charset.StandardCharsets;
@@ -53,9 +54,6 @@ public class CsrfFilter implements ContainerRequestFilter, ContainerResponseFilt
     @ConfigProperty(name = "app.auth.csrf.header-name", defaultValue = "X-CSRF-TOKEN")
     String headerName;
 
-    @ConfigProperty(name = "app.auth.cookie.secure", defaultValue = "true")
-    boolean secure;
-
     @Override
     public void filter(ContainerRequestContext request) {
         if (SAFE_METHODS.contains(request.getMethod())) {
@@ -90,10 +88,21 @@ public class CsrfFilter implements ContainerRequestFilter, ContainerResponseFilt
         StringBuilder cookie = new StringBuilder()
             .append(cookieName).append('=').append(token)
             .append("; Path=/; SameSite=Lax");
-        if (secure) {
+        if (secureCookie()) {
             cookie.append("; Secure");
         }
         return cookie.toString();
+    }
+
+    /**
+     * Marca la cookie como {@code Secure}. Se lee en cada petición (no se inyecta
+     * en un campo) porque es configuración de entorno y en la imagen nativa el
+     * valor de los campos se fija al compilar.
+     */
+    private boolean secureCookie() {
+        return ConfigProvider.getConfig()
+            .getOptionalValue("app.auth.cookie.secure", Boolean.class)
+            .orElse(true);
     }
 
     private static boolean constantTimeEquals(String first, String second) {
