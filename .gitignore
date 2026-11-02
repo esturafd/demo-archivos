@@ -2,6 +2,7 @@
 .neon
 node_modules/
 .env
+.env.deploy
 
 # Script automatizados
 __pycache__/

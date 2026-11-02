@@ -15,9 +15,11 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.StreamingOutput;
 import me.esturafd.demo.archivos.files.api.dto.FilePageResponse;
 import me.esturafd.demo.archivos.files.api.dto.FileView;
+import me.esturafd.demo.archivos.files.api.dto.OwnerView;
 import me.esturafd.demo.archivos.files.application.DeleteFileUseCase;
 import me.esturafd.demo.archivos.files.application.DownloadFileUseCase;
 import me.esturafd.demo.archivos.files.application.FindFileUseCase;
+import me.esturafd.demo.archivos.files.application.ListFileOwnersUseCase;
 import me.esturafd.demo.archivos.files.application.ListFilesUseCase;
 import me.esturafd.demo.archivos.files.application.UploadFileUseCase;
 import me.esturafd.demo.archivos.files.application.model.DownloadedFile;
@@ -49,6 +51,7 @@ import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -79,6 +82,9 @@ public class FilesResource {
 
     @Inject
     ListFilesUseCase listFiles;
+
+    @Inject
+    ListFileOwnersUseCase listOwners;
 
     @Inject
     UploadFileUseCase uploadFile;
@@ -114,6 +120,8 @@ public class FilesResource {
     public FilePageResponse list(
         @Parameter(description = "Texto a buscar en el nombre del archivo.")
         @QueryParam("search") String search,
+        @Parameter(description = "Propietario por el que filtrar; por defecto, todos los visibles.")
+        @QueryParam("ownerId") UUID ownerId,
         @Parameter(description = "Cursor opaco de la página anterior (`nextCursor`).")
         @QueryParam("cursor") String cursor,
         @Parameter(description = "Tamaño de página. Por defecto 20, máximo 100.")
@@ -121,7 +129,29 @@ public class FilesResource {
     ) {
         SessionUser actor = currentSession.require();
         return FilePageResponse.from(
-            listFiles.list(actor, search, cursor, limit, context.requestId(), context.clientIp()));
+            listFiles.list(actor, search, ownerId, cursor, limit, context.requestId(), context.clientIp()));
+    }
+
+    /**
+     * Propietarios de los archivos visibles, para el selector de usuario. Incluye
+     * siempre al propio usuario aunque aún no tenga archivos.
+     */
+    @GET
+    @Path("/owners")
+    @Operation(
+        summary = "Listar los propietarios visibles",
+        description = """
+            Usuarios cuyos archivos ve el usuario actual, más él mismo. Sirve para
+            poblar el selector de usuario del listado. El alcance lo acota RLS.
+            """
+    )
+    @APIResponse(responseCode = "200", description = "Propietarios visibles.")
+    public List<OwnerView> owners() {
+        SessionUser actor = currentSession.require();
+        return listOwners.list(actor, context.requestId(), context.clientIp())
+            .stream()
+            .map(OwnerView::from)
+            .toList();
     }
 
     /** Carga un archivo. */

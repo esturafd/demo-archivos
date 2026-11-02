@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Prepara el ambiente productivo del backend en Google Cloud a partir de un
-# archivo .env. Reúne todo lo que hay que hacer UNA VEZ, a mano, antes de montar
+# archivo .env.deploy. Reúne todo lo que hay que hacer UNA VEZ, a mano, antes de montar
 # el CI/CD:
 #
 #   1. Habilita las APIs necesarias.
@@ -16,7 +16,7 @@
 # Es idempotente: se puede volver a ejecutar sin duplicar nada.
 #
 # Uso:
-#   ./configure-environment.sh                    # lee ./.env
+#   ./configure-environment.sh                    # lee ./.env.deploy
 #   ./configure-environment.sh --env-file RUTA
 #   ./configure-environment.sh --dry-run          # no cambia nada, solo muestra
 #   ./configure-environment.sh --no-create-service
@@ -25,7 +25,7 @@
 # Requisitos:
 #   - gcloud instalado y autenticado (gcloud auth login), con permisos de
 #     propietario del proyecto (para habilitar APIs, IAM y cuentas de servicio).
-#   - Un archivo .env (copia .env.example) con los valores reales.
+#   - Un archivo .env.deploy (copia .env.deploy.example) con los valores reales.
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ PLACEHOLDER_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
 
 # --- Argumentos --------------------------------------------------------------
 
-ENV_FILE="./.env"
+ENV_FILE="./.env.deploy"
 DRY_RUN=0
 CREATE_SERVICE=1
 
@@ -100,7 +100,7 @@ titulo() {
   echo "== $* =="
 }
 
-# Lee el valor de una clave del .env (sin comillas ni espacios sobrantes).
+# Lee el valor de una clave del .env.deploy (sin comillas ni espacios sobrantes).
 value_of() {
   local key="$1" line value
   line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" 2>/dev/null | head -1 || true)"
@@ -121,10 +121,10 @@ existe() {
   "$@" >/dev/null 2>&1
 }
 
-# --- Lectura y validación del .env -------------------------------------------
+# --- Lectura y validación del .env.deploy -------------------------------------------
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "No encuentro el archivo $ENV_FILE. Copia .env.example como .env." >&2
+  echo "No encuentro el archivo $ENV_FILE. Copia .env.deploy.example como .env.deploy." >&2
   exit 1
 fi
 

@@ -2,6 +2,7 @@ package me.esturafd.demo.archivos.files.application;
 
 import me.esturafd.demo.archivos.files.application.model.AccessIntent;
 import me.esturafd.demo.archivos.files.application.model.FileForDownload;
+import me.esturafd.demo.archivos.files.application.model.FileOwner;
 import me.esturafd.demo.archivos.files.application.model.FileSearch;
 import me.esturafd.demo.archivos.files.application.model.NewFile;
 import me.esturafd.demo.archivos.files.application.model.StoredFile;
@@ -30,6 +31,12 @@ public interface FilesDataPort {
         String requestId,
         String ipAddress
     );
+
+    /**
+     * Propietarios de los archivos visibles para el actor, para poblar un
+     * selector de usuario. RLS acota el conjunto.
+     */
+    List<FileOwner> listVisibleOwners(UUID actorId, String requestId, String ipAddress);
 
     /** Metadatos visibles de un archivo, o vacío si no existe o queda fuera de alcance. */
     Optional<StoredFile> findVisibleFile(

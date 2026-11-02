@@ -5,6 +5,7 @@ import jakarta.inject.Inject;
 import me.esturafd.demo.archivos.files.application.FilesDataPort;
 import me.esturafd.demo.archivos.files.application.model.AccessIntent;
 import me.esturafd.demo.archivos.files.application.model.FileForDownload;
+import me.esturafd.demo.archivos.files.application.model.FileOwner;
 import me.esturafd.demo.archivos.files.application.model.FileSearch;
 import me.esturafd.demo.archivos.files.application.model.NewFile;
 import me.esturafd.demo.archivos.files.application.model.StoredFile;
@@ -49,12 +50,14 @@ public class PostgresFilesAdapter implements FilesDataPort {
               FROM app.files
              WHERE deleted_at IS NULL
                AND (?::text IS NULL OR original_name ILIKE '%%' || ?::text || '%%')
+               AND (?::uuid IS NULL OR owner_id = ?::uuid)
                AND (?::timestamptz IS NULL OR (uploaded_at, id) < (?::timestamptz, ?::uuid))
              ORDER BY uploaded_at DESC, id DESC
              LIMIT ?
             """.formatted(METADATA_COLUMNS),
             PostgresFilesAdapter::mapStoredFile,
             search.text(), search.text(),
+            search.ownerId(), search.ownerId(),
             timestamp(search.cursorUploadedAt()), timestamp(search.cursorUploadedAt()), search.cursorId(),
             search.limit() + 1
         ));
@@ -76,6 +79,20 @@ public class PostgresFilesAdapter implements FilesDataPort {
             PostgresFilesAdapter::mapStoredFile,
             fileId
         ));
+    }
+
+    @Override
+    public List<FileOwner> listVisibleOwners(UUID actorId, String requestId, String ipAddress) {
+        // Los propietarios salen de los archivos que el actor puede ver (RLS). El
+        // nombre se toma de app.users, con su propio RLS: para quien puede ver el
+        // archivo, el dueño también es visible; si no, el nombre queda nulo y se
+        // usa el correo.
+        return database.inTransaction(actorId, requestId, ipAddress, sql -> sql.queryMany("""
+            SELECT DISTINCT f.owner_id, f.owner_email, u.name AS owner_name
+              FROM app.files f
+              LEFT JOIN app.users u ON u.id = f.owner_id
+             WHERE f.deleted_at IS NULL
+            """, PostgresFilesAdapter::mapFileOwner));
     }
 
     @Override
@@ -195,6 +212,14 @@ public class PostgresFilesAdapter implements FilesDataPort {
             rows.getString("owner_email"),
             rows.getObject("area_id", UUID.class),
             instant(rows, "uploaded_at")
+        );
+    }
+
+    private static FileOwner mapFileOwner(ResultSet rows) throws SQLException {
+        return new FileOwner(
+            rows.getObject("owner_id", UUID.class),
+            rows.getString("owner_email"),
+            rows.getString("owner_name")
         );
     }
 

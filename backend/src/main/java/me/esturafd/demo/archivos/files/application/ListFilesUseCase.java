@@ -10,6 +10,7 @@ import me.esturafd.demo.archivos.shared.security.application.model.SessionUser;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Caso de uso del listado y la búsqueda de archivos.
@@ -29,6 +30,7 @@ public class ListFilesUseCase {
     public FilePage list(
         SessionUser actor,
         String search,
+        UUID ownerId,
         String cursor,
         Integer limit,
         String requestId,
@@ -39,6 +41,7 @@ public class ListFilesUseCase {
 
         FileSearch query = new FileSearch(
             blankToNull(search),
+            ownerId,
             position.map(FileCursor::uploadedAt).orElse(null),
             position.map(FileCursor::id).orElse(null),
             pageSize

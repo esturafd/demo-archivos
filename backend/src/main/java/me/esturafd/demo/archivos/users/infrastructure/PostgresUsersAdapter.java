@@ -38,6 +38,7 @@ public class PostgresUsersAdapter implements UsersDataPort {
     @Override
     public List<UserDetail> listVisibleUsers(
         String search,
+        UUID areaId,
         UUID actorId,
         String requestId,
         String ipAddress
@@ -49,8 +50,10 @@ public class PostgresUsersAdapter implements UsersDataPort {
              WHERE (?::text IS NULL
                     OR u.email ILIKE '%%' || ?::text || '%%'
                     OR u.name  ILIKE '%%' || ?::text || '%%')
+               AND (?::uuid IS NULL OR u.area_id = ?::uuid)
              ORDER BY lower(u.email)
-            """.formatted(COLUMNS), PostgresUsersAdapter::mapUser, search, search, search));
+            """.formatted(COLUMNS), PostgresUsersAdapter::mapUser,
+            search, search, search, areaId, areaId));
     }
 
     @Override

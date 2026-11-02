@@ -100,10 +100,12 @@ public class UsersResource {
         description = "Usuarios encontrados.")
     public List<UserDetailView> list(
         @Parameter(description = "Texto a buscar en correo o nombre.")
-        @QueryParam("search") String search
+        @QueryParam("search") String search,
+        @Parameter(description = "Área por la que filtrar; por defecto, todas.")
+        @QueryParam("areaId") UUID areaId
     ) {
         SessionUser actor = currentSession.require();
-        return listUsers.list(actor, search, context.requestId(), context.clientIp())
+        return listUsers.list(actor, search, areaId, context.requestId(), context.clientIp())
             .stream()
             .map(UserDetailView::from)
             .toList();

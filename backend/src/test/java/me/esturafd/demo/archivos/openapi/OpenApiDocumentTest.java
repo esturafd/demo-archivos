@@ -38,6 +38,7 @@ class OpenApiDocumentTest {
         Map.entry("/api/auth/sessions/current", List.of("get", "delete")),
         Map.entry("/api/auth/sessions/{id}", List.of("delete")),
         Map.entry("/api/files", List.of("get", "post")),
+        Map.entry("/api/files/owners", List.of("get")),
         Map.entry("/api/files/{id}", List.of("get", "delete")),
         Map.entry("/api/files/{id}/content", List.of("get")),
         Map.entry("/api/users", List.of("get", "post")),

@@ -92,6 +92,67 @@ class FilesResourceTest extends ApiTestBase {
         assertThat(list(admin).size(), is(2));
     }
 
+    @Test
+    void filtraPorPropietarioDentroDelAlcance() {
+        Client manager = login(MANAGER_EMAIL);
+        upload(login(ACTIVE_EMAIL), "de-activo.txt");
+        upload(login(OTHER_EMAIL), "de-otro.txt");
+        upload(manager, "del-gerente.txt");
+
+        // El propietario de su área.
+        assertThat(names(listByOwner(manager, ACTIVE)), is(List.of("de-activo.txt")));
+        // Fuera de su alcance: el filtro no lo salta (RLS sigue acotando).
+        assertThat(listByOwner(manager, OTHER), is(List.of()));
+        // Él mismo.
+        assertThat(names(listByOwner(manager, MANAGER)), is(List.of("del-gerente.txt")));
+    }
+
+    @Test
+    void elEstandarNoVeArchivosAjenosAunqueFiltrePorPropietario() {
+        Client active = login(ACTIVE_EMAIL);
+        upload(active, "propio.txt");
+        upload(login(OTHER_EMAIL), "de-otro.txt");
+
+        assertThat(names(listByOwner(active, ACTIVE)), is(List.of("propio.txt")));
+        assertThat(listByOwner(active, OTHER), is(List.of()));
+    }
+
+    // ------------------------------------------------------------------
+    // Propietarios visibles (selector de usuario)
+    // ------------------------------------------------------------------
+
+    @Test
+    void elEstandarSoloSeVeASiMismoComoPropietario() {
+        Client active = login(ACTIVE_EMAIL);
+        upload(active, "propio.txt");
+
+        assertThat(ownerIds(active), is(List.of(ACTIVE)));
+    }
+
+    @Test
+    void elGerenteVeLosPropietariosDeSuAreaYASiMismo() {
+        Client manager = login(MANAGER_EMAIL);
+        upload(login(ACTIVE_EMAIL), "de-activo.txt");
+        upload(login(OTHER_EMAIL), "de-otro.txt");
+
+        List<String> owners = ownerIds(manager);
+        assertThat(owners, hasItem(ACTIVE));
+        assertThat(owners, hasItem(MANAGER));      // él mismo, aunque no tenga archivos
+        assertThat(owners, not(hasItem(OTHER)));   // fuera de su alcance
+    }
+
+    @Test
+    void elAdministradorVeTodosLosPropietarios() {
+        Client admin = login(ADMIN_EMAIL);
+        upload(login(ACTIVE_EMAIL), "a.txt");
+        upload(login(OTHER_EMAIL), "b.txt");
+
+        List<String> owners = ownerIds(admin);
+        assertThat(owners, hasItem(ACTIVE));
+        assertThat(owners, hasItem(OTHER));
+        assertThat(owners, hasItem(ADMIN));        // él mismo
+    }
+
     // ------------------------------------------------------------------
     // Descarga y eliminación
     // ------------------------------------------------------------------
@@ -224,6 +285,21 @@ class FilesResourceTest extends ApiTestBase {
             .when().get("/api/files")
             .then().statusCode(200)
             .extract().jsonPath().getList("items");
+    }
+
+    private static List<Map<String, Object>> listByOwner(Client client, String ownerId) {
+        return given().cookie("session", client.session())
+            .queryParam("ownerId", ownerId)
+            .when().get("/api/files")
+            .then().statusCode(200)
+            .extract().jsonPath().getList("items");
+    }
+
+    private static List<String> ownerIds(Client client) {
+        return given().cookie("session", client.session())
+            .when().get("/api/files/owners")
+            .then().statusCode(200)
+            .extract().jsonPath().getList("id");
     }
 
     private static List<String> names(List<Map<String, Object>> files) {

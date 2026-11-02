@@ -15,9 +15,10 @@ import java.util.UUID;
  */
 public interface UsersDataPort {
 
-    /** Usuarios que coinciden con la búsqueda, ordenados por correo. */
+    /** Usuarios que coinciden con la búsqueda y, si se indica, con el área, ordenados por correo. */
     List<UserDetail> listVisibleUsers(
         String search,
+        UUID areaId,
         UUID actorId,
         String requestId,
         String ipAddress

@@ -14,6 +14,7 @@ import java.util.Map;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
@@ -156,6 +157,19 @@ class UsersResourceTest extends ApiTestBase {
         assertThat(found.get(0).get("email"), is(HEAD_EMAIL));
     }
 
+    @Test
+    void filtraUsuariosPorArea() {
+        Client admin = login(ADMIN_EMAIL);
+
+        List<Map<String, Object>> areaA = listByArea(admin, AREA_A);
+        assertThat(areaA.size(), is(3));
+        assertThat(emails(areaA), hasItems(ACTIVE_EMAIL, INACTIVE_EMAIL, HEAD_EMAIL));
+
+        List<Map<String, Object>> areaB = listByArea(admin, AREA_B);
+        assertThat(areaB.size(), is(1));
+        assertThat(areaB.get(0).get("email"), is(OTHER_EMAIL));
+    }
+
     // ------------------------------------------------------------------
     // Utilidades
     // ------------------------------------------------------------------
@@ -184,5 +198,17 @@ class UsersResourceTest extends ApiTestBase {
             .body(body)
             .when().patch("/api/users/" + id)
             .then();
+    }
+
+    private static List<Map<String, Object>> listByArea(Client admin, String areaId) {
+        return given().cookie("session", admin.session())
+            .queryParam("areaId", areaId)
+            .when().get("/api/users").then().statusCode(200)
+            .extract().as(new TypeRef<List<Map<String, Object>>>() {
+            });
+    }
+
+    private static List<String> emails(List<Map<String, Object>> users) {
+        return users.stream().map(user -> (String) user.get("email")).toList();
     }
 }
