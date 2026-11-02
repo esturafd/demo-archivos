@@ -1,0 +1,87 @@
+# Ambiente de pruebas local de «Archivos».
+#
+# Levanta los cuatro servicios del proyecto en la misma red:
+#   - db       PostgreSQL (con los roles técnicos y las migraciones aplicadas)
+#   - s3       `s3mock`, un S3 compatible en memoria (bucket `files`)
+#   - backend  la API Quarkus en modo nativo (imagen esturafd/archivos-backend)
+#   - frontend la SPA servida por nginx (imagen esturafd/archivos-frontend), con /api
+#              reenviado al backend para que todo sea el mismo origen
+#
+# Uso:
+#   docker compose up
+#   abrir http://localhost:8081
+#
+# Los valores por defecto son de pruebas. Para cambiarlos, copia docker/.env.example
+# como .env (en la raíz) y ajusta lo que necesites.
+
+name: archivos
+
+services:
+  # --- Base de datos ---------------------------------------------------------
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      # Ambiente local: no hay TLS; el acceso interno no exige contraseña (los
+      # roles técnicos igual se crean con contraseña).
+      POSTGRES_HOST_AUTH_METHOD: trust
+      APP_MIGRATOR_PASSWORD: ${APP_MIGRATOR_PASSWORD:-migrator}
+      APP_RUNTIME_PASSWORD: ${APP_RUNTIME_PASSWORD:-runtime}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # El script de arranque crea los roles y aplica estas migraciones.
+      - ./database/migrations:/migrations:ro
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${DB_PORT:-5432}:5432"
+
+  # --- Almacenamiento de objetos (S3 compatible en memoria) ------------------
+  s3:
+    image: adobe/s3mock:latest
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: files
+    ports:
+      - "${S3_PORT:-9090}:9090"
+
+  # --- API -------------------------------------------------------------------
+  backend:
+    image: esturafd/archivos-backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+      s3:
+        condition: service_started
+    environment:
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-app}?sslmode=disable
+      QUARKUS_DATASOURCE_USERNAME: app_runtime
+      QUARKUS_DATASOURCE_PASSWORD: ${APP_RUNTIME_PASSWORD:-runtime}
+      # S3 compatible (s3mock). El cliente usa el estilo de ruta (configurado en
+      # application.properties).
+      QUARKUS_S3_ENDPOINT_OVERRIDE: http://s3:9090
+      QUARKUS_S3_AWS_CREDENTIALS_TYPE: static
+      QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-test}
+      QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-test}
+      APP_STORAGE_BUCKET: files
+      # En local viaja por HTTP, así que la cookie no puede ir marcada como Secure.
+      APP_AUTH_COOKIE_SECURE: "false"
+      APP_AUTH_RATE_LIMIT_KEY: ${APP_AUTH_RATE_LIMIT_KEY:-clave-local-de-pruebas}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+
+  # --- SPA -------------------------------------------------------------------
+  frontend:
+    image: esturafd/archivos-frontend:latest
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+
+volumes:
+  db-data:
