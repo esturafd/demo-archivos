@@ -3,6 +3,7 @@ import { AppLayout } from '@/app/layout/AppLayout'
 import { ComingSoonPage } from '@/app/pages/ComingSoonPage'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { LoginPage } from '@/auth/ui/LoginPage'
+import { FilesPage } from '@/files/ui/FilesPage'
 import { RequireRole, RequireSession } from '@/shared/session/guards'
 
 export const router = createBrowserRouter([
@@ -16,7 +17,7 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/archivos" replace /> },
-      { path: 'archivos', element: <ComingSoonPage title="Archivos" /> },
+      { path: 'archivos', element: <FilesPage /> },
       { path: 'areas', element: <ComingSoonPage title="Áreas" /> },
       {
         path: 'areas-gestionadas',
