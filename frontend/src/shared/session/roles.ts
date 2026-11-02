@@ -16,3 +16,19 @@ export function roleLevel(role: AppRole): number {
 export function hasAtLeastRole(role: AppRole, required: AppRole): boolean {
   return ROLE_LEVEL[role] >= ROLE_LEVEL[required]
 }
+
+/** Etiqueta legible de cada rol. */
+export const ROLE_LABEL: Record<AppRole, string> = {
+  standard: 'Estándar',
+  area_head: 'Jefe de área',
+  manager: 'Gerente',
+  admin: 'Administrador',
+}
+
+/** Etiqueta de un rol por su valor crudo, con el valor como respaldo. */
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) {
+    return '—'
+  }
+  return ROLE_LABEL[role as AppRole] ?? role
+}

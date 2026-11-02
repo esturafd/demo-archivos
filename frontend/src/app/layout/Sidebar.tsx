@@ -3,16 +3,8 @@ import { NavLink } from 'react-router'
 import { NAV_ITEMS } from '@/app/layout/navItems'
 import { useLogout } from '@/auth/application/useLogout'
 import { SessionsDialog } from '@/auth/ui/SessionsDialog'
-import type { AppRole } from '@/shared/session/model'
 import { useSession } from '@/shared/session/sessionContext'
-import { hasAtLeastRole } from '@/shared/session/roles'
-
-const ROLE_LABEL: Record<AppRole, string> = {
-  standard: 'Estándar',
-  area_head: 'Jefe de área',
-  manager: 'Gerente',
-  admin: 'Administrador',
-}
+import { hasAtLeastRole, ROLE_LABEL } from '@/shared/session/roles'
 
 function initials(name: string): string {
   return name

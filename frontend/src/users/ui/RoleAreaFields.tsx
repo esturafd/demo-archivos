@@ -1,7 +1,8 @@
 import type { UseFormRegisterReturn } from 'react-hook-form'
 import type { Area } from '@/areas/domain/area'
 import { APP_ROLES, type AppRole } from '@/shared/session/model'
-import { ROLE_LABEL, requiresArea } from '@/users/domain/user'
+import { ROLE_LABEL } from '@/shared/session/roles'
+import { requiresArea } from '@/users/domain/user'
 
 interface RoleAreaFieldsProps {
   role: AppRole

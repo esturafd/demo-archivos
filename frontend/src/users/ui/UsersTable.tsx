@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
-import { ROLE_LABEL, type UserDetail } from '@/users/domain/user'
+import { ROLE_LABEL } from '@/shared/session/roles'
+import type { UserDetail } from '@/users/domain/user'
 
 function initials(name: string): string {
   return name

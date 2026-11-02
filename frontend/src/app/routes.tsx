@@ -1,8 +1,8 @@
 import { createBrowserRouter, Navigate } from 'react-router'
 import { AppLayout } from '@/app/layout/AppLayout'
-import { ComingSoonPage } from '@/app/pages/ComingSoonPage'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
 import { AreasPage } from '@/areas/ui/AreasPage'
+import { AuditPage } from '@/audit/ui/AuditPage'
 import { LoginPage } from '@/auth/ui/LoginPage'
 import { FilesPage } from '@/files/ui/FilesPage'
 import { ManagedAreasPage } from '@/managedareas/ui/ManagedAreasPage'
@@ -42,7 +42,7 @@ export const router = createBrowserRouter([
         path: 'historial',
         element: (
           <RequireRole role="manager">
-            <ComingSoonPage title="Historial" />
+            <AuditPage />
           </RequireRole>
         ),
       },

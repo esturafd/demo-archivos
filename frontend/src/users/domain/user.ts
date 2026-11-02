@@ -18,11 +18,3 @@ export type UserDetail = z.infer<typeof userDetailSchema>
 export function requiresArea(role: AppRole): boolean {
   return role === 'standard' || role === 'area_head'
 }
-
-/** Etiqueta legible de un rol. */
-export const ROLE_LABEL: Record<AppRole, string> = {
-  standard: 'Estándar',
-  area_head: 'Jefe de área',
-  manager: 'Gerente',
-  admin: 'Administrador',
-}
