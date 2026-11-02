@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router'
 import { AppLayout } from '@/app/layout/AppLayout'
 import { ComingSoonPage } from '@/app/pages/ComingSoonPage'
 import { NotFoundPage } from '@/app/pages/NotFoundPage'
+import { AreasPage } from '@/areas/ui/AreasPage'
 import { LoginPage } from '@/auth/ui/LoginPage'
 import { FilesPage } from '@/files/ui/FilesPage'
 import { ManagedAreasPage } from '@/managedareas/ui/ManagedAreasPage'
@@ -20,7 +21,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/archivos" replace /> },
       { path: 'archivos', element: <FilesPage /> },
-      { path: 'areas', element: <ComingSoonPage title="Áreas" /> },
+      { path: 'areas', element: <AreasPage /> },
       {
         path: 'areas-gestionadas',
         element: (

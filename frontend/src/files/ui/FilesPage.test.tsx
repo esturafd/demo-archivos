@@ -103,6 +103,8 @@ describe('página de archivos', () => {
 
     const user = userEvent.setup()
     const select = await screen.findByLabelText('Elegir el usuario cuyos archivos se muestran')
+    // El selector arranca solo con uno mismo; hay que esperar a los demás propietarios.
+    await screen.findByRole('option', { name: 'María' })
     await user.selectOptions(select, 'u2')
 
     await waitFor(() => expect(requested).toContain('u2'))

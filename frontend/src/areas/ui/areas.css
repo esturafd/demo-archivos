@@ -1,0 +1,8 @@
+/* Estilos propios del módulo `areas`. Se importan desde la propia página. */
+
+.area-name {
+  font-weight: 500;
+}
+.area-desc {
+  max-width: 420px;
+}
