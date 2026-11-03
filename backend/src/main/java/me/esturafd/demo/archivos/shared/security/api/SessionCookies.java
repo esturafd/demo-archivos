@@ -1,6 +1,7 @@
 package me.esturafd.demo.archivos.shared.security.api;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.time.Duration;
@@ -20,9 +21,6 @@ public class SessionCookies {
 
     @ConfigProperty(name = "app.auth.session.ttl")
     Duration ttl;
-
-    @ConfigProperty(name = "app.auth.cookie.secure", defaultValue = "true")
-    boolean secure;
 
     public String name() {
         return cookieName;
@@ -47,7 +45,12 @@ public class SessionCookies {
     }
 
     private String secureSuffix() {
-        // En HTTPS, Secure. Se desactiva solo para desarrollo sobre HTTP.
+        // En HTTPS, Secure. Se desactiva para desarrollo sobre HTTP. Se lee en
+        // cada uso porque en la imagen nativa el valor de un campo se fija al
+        // compilar.
+        boolean secure = ConfigProvider.getConfig()
+            .getOptionalValue("app.auth.cookie.secure", Boolean.class)
+            .orElse(true);
         return secure ? "; Secure" : "";
     }
 }

@@ -1,0 +1,34 @@
+/* Estilos propios del módulo `audit`. Se importan desde la propia página. */
+
+.audit-row {
+  cursor: default;
+}
+.audit-detail > td {
+  background: var(--color-bg);
+}
+.audit-detail__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 20px;
+  margin: 0;
+}
+.audit-detail__grid dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.audit-detail__grid dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  word-break: break-word;
+}
+.audit-detail__wide {
+  grid-column: 1 / -1;
+}
+.audit-detail pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+}

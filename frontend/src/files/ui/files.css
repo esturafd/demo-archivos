@@ -1,0 +1,30 @@
+/* Estilos propios del módulo `files`. Se importan desde la propia página. */
+
+.drop {
+  display: grid;
+  gap: 6px;
+  place-items: center;
+  padding: 28px 20px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  text-align: center;
+  cursor: pointer;
+  color: var(--color-text);
+}
+.drop:hover {
+  border-color: var(--color-primary);
+}
+.drop__file {
+  display: grid;
+  gap: 2px;
+}
+.hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+progress {
+  width: 100%;
+  margin-top: 12px;
+}

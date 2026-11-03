@@ -1,0 +1,51 @@
+/*
+ * Paleta y derivaciones (ver documentation/frontend/plan.md §4.2).
+ *
+ * Los tres colores vivos comparten saturación (55 %) y cambian de matiz
+ * (violeta 253, rosa 342, terracota 13). El resto son derivaciones que mueven
+ * luminosidad con los mismos matices.
+ */
+:root {
+  --color-text: hsl(255 57% 3%);
+  --color-text-muted: hsl(255 14% 42%);
+  --color-bg: hsl(249 54% 97%);
+  --color-surface: hsl(0 0% 100%);
+  --color-border: hsl(253 24% 90%);
+
+  --color-primary: hsl(253 55% 55%);
+  --color-primary-strong: hsl(253 55% 46%);
+  --color-primary-soft: hsl(253 60% 95%);
+  --on-primary: hsl(0 0% 100%);
+
+  --color-secondary: hsl(342 55% 74%);
+  --color-secondary-soft: hsl(342 60% 96%);
+  --color-accent: hsl(13 55% 65%);
+  --color-accent-soft: hsl(13 60% 96%);
+
+  --color-danger: hsl(342 58% 46%);
+  --color-danger-strong: hsl(342 58% 38%);
+  --color-danger-soft: hsl(342 60% 96%);
+  --color-success: hsl(160 42% 34%);
+  --color-success-soft: hsl(160 45% 94%);
+
+  --radius: 8px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px hsl(255 57% 3% / 0.06), 0 8px 24px hsl(255 57% 3% / 0.08);
+  --sidebar-width: 264px;
+
+  /* Pico CSS: alinear sus componentes con la paleta. */
+  --pico-background-color: var(--color-bg);
+  --pico-color: var(--color-text);
+  --pico-muted-color: var(--color-text-muted);
+  --pico-muted-border-color: var(--color-border);
+  --pico-primary: var(--color-primary);
+  --pico-primary-hover: var(--color-primary-strong);
+  --pico-primary-focus: var(--color-primary-soft);
+  --pico-primary-inverse: var(--on-primary);
+  --pico-border-radius: var(--radius);
+  --pico-card-background-color: var(--color-surface);
+  --pico-card-border-color: var(--color-border);
+  --pico-form-element-background-color: var(--color-surface);
+  --pico-form-element-border-color: var(--color-border);
+  --pico-font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}

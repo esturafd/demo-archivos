@@ -1,0 +1,109 @@
+@startuml 07-er
+title Diagrama 7 · Modelo entidad-relación
+
+hide circle
+skinparam shadowing false
+skinparam linetype ortho
+
+entity "app.areas" as areas {
+  * id : uuid <<PK>>
+  --
+  * name : text
+  description : text
+  * is_active : boolean
+  * created_at : timestamptz
+  * updated_at : timestamptz
+}
+
+entity "app.users" as users {
+  * id : uuid <<PK>>
+  --
+  * email : text
+  * password_hash : text
+  * name : text
+  * role : app_role
+  area_id : uuid <<FK>>
+  * is_active : boolean
+  deactivated_at : timestamptz
+  * created_at : timestamptz
+  * updated_at : timestamptz
+}
+
+entity "app.manager_areas" as manager_areas {
+  * manager_id : uuid <<PK,FK>>
+  * area_id : uuid <<PK,FK>>
+  --
+  * assigned_at : timestamptz
+  assigned_by : uuid
+}
+
+entity "app.files" as files {
+  * id : uuid <<PK>>
+  --
+  * owner_id : uuid <<FK>>
+  * owner_email : text
+  area_id : uuid <<FK>>
+  * storage_key : text
+  * original_name : text
+  * mime_type : text
+  * size_bytes : bigint
+  sha256_hex : char(64)
+  * uploaded_at : timestamptz
+  deleted_at : timestamptz
+  deleted_by_id : uuid
+  deleted_by_email : text
+}
+
+entity "app.sessions" as sessions {
+  * id : uuid <<PK>>
+  --
+  * token_hash : text
+  * user_id : uuid <<FK>>
+  * created_at : timestamptz
+  * expires_at : timestamptz
+  revoked_at : timestamptz
+  last_seen_at : timestamptz
+  ip_address : inet
+  user_agent : text
+}
+
+entity "app.login_rate_limits" as rate_limits {
+  * key_hash : text <<PK>>
+  --
+  * failed_count : integer
+  * window_started_at : timestamptz
+  blocked_until : timestamptz
+  * updated_at : timestamptz
+}
+
+entity "audit.action_logs" as action_logs {
+  * id : bigint <<PK>>
+  --
+  * occurred_at : timestamptz
+  * action : audit_action
+  actor_user_id : uuid
+  actor_email : text
+  actor_role : app_role
+  actor_area_id : uuid
+  actor_area_name : text
+  file_id : uuid
+  file_name : text
+  * ip_address : inet
+  * request_id : text
+  * metadata : jsonb
+}
+
+areas ||--o{ users
+areas ||--o{ manager_areas
+users ||--o{ manager_areas
+users ||--o{ files
+areas ||--o{ files
+users ||--o{ sessions
+
+note bottom of action_logs
+  El historial es inmutable (solo se añade) y no tiene
+  claves foráneas con cascada: conserva copias del usuario,
+  el área y el archivo para seguir siendo legible aunque
+  cambien o se eliminen.
+end note
+@enduml

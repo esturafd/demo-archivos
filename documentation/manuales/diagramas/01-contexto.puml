@@ -1,0 +1,19 @@
+@startuml 01-contexto
+!include <C4/C4_Context>
+title Diagrama 1 · Contexto del sistema (C4, nivel 1)
+
+skinparam shadowing false
+
+Person(usuario, "Usuario", "Estándar, jefe de área, gerente o administrador")
+
+System(archivos, "Plataforma «Archivos»", "Gestiona archivos según el usuario, su rol y su área")
+
+System_Ext(almacen, "Almacenamiento de objetos", "Guarda el contenido de los archivos (S3 compatible)")
+System_Ext(bd, "PostgreSQL", "Guarda los datos y aplica las reglas de acceso")
+System_Ext(ci, "Integración y despliegue", "Compila, prueba y publica (GitHub Actions)")
+
+Rel(usuario, archivos, "Usa", "HTTPS")
+Rel(archivos, bd, "Lee y escribe", "JDBC")
+Rel(archivos, almacen, "Guarda y recupera contenido", "API S3")
+Rel(ci, archivos, "Despliega", "contenedores")
+@enduml
