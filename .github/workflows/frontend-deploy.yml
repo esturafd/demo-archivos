@@ -1,0 +1,202 @@
+# Integración y despliegue continuos del frontend.
+#
+#   - En cada pull request que toca el frontend: compila, prueba y publica un
+#     *canal de vista previa* de Firebase Hosting (una URL temporal).
+#   - En `main`: compila, prueba y publica en el *canal* en vivo.
+#
+# El frontend y la API quedan en el **mismo origen** gracias al *rewrite*
+# `firebase.json` (`/api/**` → Cloud Run). Por eso la SPA usa `/api` por defecto
+# y no necesita CORS ni una base distinta.
+#
+# Requisitos previos, una sola vez por ambiente:
+#   - Proyecto de Firebase (el mismo de GCP) con Hosting habilitado.
+#   - Cuenta de servicio de despliegue con permiso de Hosting (Firebase Hosting
+#     Admin) y, para el *rewrite* a Cloud Run, el agente de Hosting con
+#     `roles/run.invoker` sobre el servicio Cloud Run.
+#   - Workload Identity Federation ya configurado (igual que el backend).
+#
+# Secretos y variables: ver la tabla al final del archivo.
+
+name: Frontend (Firebase Hosting)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Compilar y probar
+  # ---------------------------------------------------------------------------
+  build:
+    name: Compilar y probar
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Preparar pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "12.16.1"
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Comprobar tipos
+        run: pnpm typecheck
+
+      - name: Ejecutar las pruebas
+        run: pnpm test
+
+      - name: Compilar la SPA
+        env:
+          # Base de la API. Con el *rewrite* de Hosting, `/api` es lo correcto
+          # (mismo origen). Solo hay que cambiarla si la API vive en otro origen.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || '/api' }}
+        run: pnpm build
+
+      - name: Guardar la compilación
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: frontend/dist
+
+  # ---------------------------------------------------------------------------
+  # 2. Publicar en el canal en vivo (main)
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Publicar (producción)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: build
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      id-token: write          # imprescindible para Workload Identity
+    steps:
+      - name: Descargar el repositorio (para `firebase.json`)
+        uses: actions/checkout@v7
+
+      - name: Recuperar la compilación
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: frontend/dist
+
+      - name: Autenticar en Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Instalar la herramienta de Firebase
+        run: npm install -g firebase-tools
+
+      - name: Publicar en Firebase Hosting
+        working-directory: frontend
+        run: |
+          firebase deploy --only hosting \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --non-interactive
+
+  # ---------------------------------------------------------------------------
+  # 3. Publicar un canal de vista previa (pull request)
+  # ---------------------------------------------------------------------------
+  preview:
+    name: Vista previa (pull request)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: build
+    # Se omite en pull requests de bifurcaciones (no tienen acceso a los secretos).
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Descargar el repositorio (para `firebase.json`)
+        uses: actions/checkout@v7
+
+      - name: Recuperar la compilación
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: frontend/dist
+
+      - name: Autenticar en Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Instalar la herramienta de Firebase
+        run: npm install -g firebase-tools
+
+      - name: Publicar el canal de vista previa
+        id: preview
+        working-directory: frontend
+        run: |
+          CHANNEL="pr-${{ github.event.number }}"
+          firebase hosting:channel:deploy "${CHANNEL}" \
+            --expires 7d \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --non-interactive \
+            --json > /tmp/channel.json
+          URL="$(node -e "const r=require('/tmp/channel.json'); console.log(Object.values(r.result)[0].url)")"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "Vista previa: ${URL}"
+
+      - name: Comentar la URL en el pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = "${{ steps.preview.outputs.url }}";
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Vista previa del frontend: ${url}`,
+            });
+
+# -----------------------------------------------------------------------------
+# Variables (Settings > Environments > `production`, o a nivel de repositorio)
+# -----------------------------------------------------------------------------
+#
+#   Nombre                              Tipo      Contenido
+#   ----------------------------------  --------  ------------------------------
+#   GCP_PROJECT_ID                      variable  id del proyecto (el mismo del backend)
+#   GCP_WORKLOAD_IDENTITY_PROVIDER      variable  recurso del proveedor WIF
+#   GCP_SERVICE_ACCOUNT                 variable  email de la cuenta de despliegue
+#   VITE_API_BASE_URL                   variable  base de la API (por defecto `/api`)
+#
+# No hay secretos: el despliegue usa Workload Identity. La variable propia del
+# frontend es **VITE_API_BASE_URL**; con el *rewrite* de Hosting basta `/api`.
+#
+# Nota: el `firebase.json` fija el destino del *rewrite* en `archivos-backend`
+# y `us-central1`; si el servicio Cloud Run se llama o vive en otro sitio,
+# ajústalo.
