@@ -5,7 +5,13 @@
  * (violeta 253, rosa 342, terracota 13). El resto son derivaciones que mueven
  * luminosidad con los mismos matices.
  */
-:root {
+:root,
+:root[data-theme] {
+  /* La app es de tema claro: se fija para que Pico no aplique su modo oscuro
+     automático. El selector incluye `[data-theme]` para superar en
+     especificidad a las reglas de Pico (`:root:not([data-theme])`). */
+  color-scheme: light;
+
   --color-text: hsl(255 57% 3%);
   --color-text-muted: hsl(255 14% 42%);
   --color-bg: hsl(249 54% 97%);

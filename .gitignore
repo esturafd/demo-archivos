@@ -17,6 +17,9 @@ __pycache__/
 # Imágenes Docker descargadas (artefactos locales)
 /dist/
 
+# Semilla de producción (contiene el hash de una contraseña real)
+/seed-produccion.sql
+
 # Documentación
 documentation/manuales/*.pdf
 documentation/manuales/**/*.png

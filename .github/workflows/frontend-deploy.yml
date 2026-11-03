@@ -8,12 +8,28 @@
 # `firebase.json` (`/api/**` → Cloud Run). Por eso la SPA usa `/api` por defecto
 # y no necesita CORS ni una base distinta.
 #
-# Requisitos previos, una sola vez por ambiente:
-#   - Proyecto de Firebase (el mismo de GCP) con Hosting habilitado.
-#   - Cuenta de servicio de despliegue con permiso de Hosting (Firebase Hosting
-#     Admin) y, para el *rewrite* a Cloud Run, el agente de Hosting con
+# Requisitos previos, una sola vez por ambiente (los hace un propietario del proyecto):
+#   - Añadir el proyecto de GCP a Firebase (mismo id):
+#       firebase projects:addfirebase <PROYECTO>
+#     y crear el sitio de Hosting (consola → Hosting → Comenzar, o):
+#       firebase hosting:sites:create <PROYECTO> --project <PROYECTO>
+#   - Habilitar las APIs de Firebase:
+#       gcloud services enable firebasehosting.googleapis.com firebase.googleapis.com \
+#         --project <PROYECTO>
+#   - Dar a la cuenta de servicio de despliegue (GCP_SERVICE_ACCOUNT) los roles:
+#       roles/firebase.admin          (leer el proyecto; o roles/firebase.viewer)
+#       roles/firebasehosting.admin   (desplegar en Hosting)
+#     y, para el *rewrite* a Cloud Run, el agente de Firebase Hosting con
 #     `roles/run.invoker` sobre el servicio Cloud Run.
 #   - Workload Identity Federation ya configurado (igual que el backend).
+#
+# Errores típicos:
+#   - «Permissions denied enabling firebasehosting.googleapis.com» -> falta habilitar la API.
+#   - «Failed to get Firebase project …» -> falta firebase.googleapis.com o los roles
+#     de Firebase en la cuenta de servicio.
+#   - «there is no Hosting site» -> falta crear el sitio de Hosting.
+#   - «HTTP Error: 404 … sites … Requested entity was not found» -> el proyecto no
+#     está añadido a Firebase (falta `firebase projects:addfirebase`).
 #
 # Secretos y variables: ver la tabla al final del archivo.
 
