@@ -1,0 +1,51 @@
+@startuml 03-componentes-backend
+title Diagrama 3 · Componentes del backend (módulos)
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Cliente (SPA)" as cliente
+
+package "Backend (Quarkus, imagen nativa)" {
+  component "auth" as auth
+  component "files" as files
+  component "users" as users
+  component "areas" as areas
+  component "managedareas" as managed
+  component "audit" as audit
+  component "shared" as shared
+}
+
+database "PostgreSQL" as db
+component "Almacenamiento S3" as s3
+
+cliente --> auth
+cliente --> files
+cliente --> users
+cliente --> areas
+cliente --> managed
+cliente --> audit
+
+auth --> shared
+files --> shared
+users --> shared
+areas --> shared
+managed --> shared
+audit --> shared
+managed --> users : "áreas del gerente"
+
+auth --> db
+files --> db
+files --> s3
+users --> db
+areas --> db
+managed --> db
+audit --> db
+
+note bottom of shared
+  Cada módulo se organiza en capas concéntricas:
+  api → application → domain, con infrastructure
+  implementando los puertos. Las dependencias
+  apuntan siempre hacia dentro.
+end note
+@enduml

@@ -19,13 +19,13 @@ Docker Engine o Docker Desktop con Compose v2 (`docker compose version`).
 
 ## Las imágenes
 
-Las imágenes se publican aparte con las etiquetas `esturafd/archivos-backend:latest`
-y `esturafd/archivos-frontend:latest`. Si te pasan los *tarballs* (por ejemplo, los
-de `dist/`) en lugar de descargarlas de un registro, cárgalas así:
+Se publican en **Docker Hub** como `esturafd/archivos-backend:latest` y
+`esturafd/archivos-frontend:latest`. `docker compose up` las **descarga
+automáticamente** si no las tienes. Para traerlas a mano:
 
 ```bash
-docker load -i dist/archivos-backend.tar.gz
-docker load -i dist/archivos-frontend.tar.gz
+docker pull esturafd/archivos-backend:latest
+docker pull esturafd/archivos-frontend:latest
 ```
 
 Para construirlas tú mismo:

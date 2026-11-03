@@ -1,0 +1,31 @@
+@startuml 05-secuencia-login
+title Diagrama 5 · Secuencia: inicio de sesión
+
+skinparam shadowing false
+
+actor "Navegador" as nav
+participant "API" as api
+participant "Base de datos" as db
+
+nav -> api : "GET /api/auth/sessions/current"
+api --> nav : "401 + cookie csrf-token"
+note right of nav
+  El navegador puede leer esa cookie
+  y reenviarla; así se protege del CSRF.
+end note
+
+nav -> api : "POST /api/auth/sessions (cookie CSRF + cabecera X-CSRF-TOKEN)"
+api -> api : comprueba el CSRF
+api -> db : límite de intentos y datos de la cuenta
+db --> api : hash de la contraseña y estado
+
+api -> api : verifica la contraseña (bcrypt)
+
+alt credenciales correctas y cuenta activa
+  api -> db : crea la sesión y registra el evento
+  api --> nav : "201 + cookie session (HttpOnly)"
+else correo, contraseña o cuenta incorrectos
+  api -> db : registra el intento fallido
+  api --> nav : "401 (mensaje idéntico en los tres casos)"
+end
+@enduml

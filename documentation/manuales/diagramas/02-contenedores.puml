@@ -1,0 +1,18 @@
+@startuml 02-contenedores
+!include <C4/C4_Container>
+title Diagrama 2 · Contenedores (C4, nivel 2)
+
+skinparam shadowing false
+
+Person(usuario, "Usuario")
+
+Container(spa, "Aplicación web (SPA)", "React + Vite", "Interfaz de usuario; se sirve como archivos estáticos")
+Container(api, "API", "Quarkus (imagen nativa)", "Reglas de negocio; único punto de acceso a los datos")
+ContainerDb(bd, "Base de datos", "PostgreSQL", "Usuarios, áreas, archivos e historial; aplica las reglas de acceso")
+Container(almacen, "Almacenamiento de objetos", "S3 compatible", "Contenido de los archivos")
+
+Rel(usuario, spa, "Usa", "HTTPS")
+Rel(spa, api, "Peticiones /api", "JSON por HTTPS")
+Rel(api, bd, "Lee y escribe", "JDBC")
+Rel(api, almacen, "Guarda y recupera el contenido", "API S3")
+@enduml

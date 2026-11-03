@@ -1,0 +1,22 @@
+@startuml 04-despliegue-pruebas
+title Diagrama 4 · Despliegue del ambiente de pruebas (local)
+
+skinparam shadowing false
+skinparam nodeStyle rectangle
+
+actor "Navegador" as nav
+
+node "Máquina de desarrollo" {
+  node "Docker Compose" {
+    component "frontend\nnginx · SPA\n8081 → 80" as fe
+    component "backend\nQuarkus nativo\n8080" as be
+    component "s3\ns3mock · 9090" as s3
+    database "db\nPostgreSQL 17 · 5432" as db
+  }
+}
+
+nav --> fe : "HTTP · localhost:8081"
+fe --> be : "/api · mismo origen"
+be --> db : "JDBC"
+be --> s3 : "API S3"
+@enduml

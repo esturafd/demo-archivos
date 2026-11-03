@@ -1,0 +1,29 @@
+@startuml 06-secuencia-descarga
+title Diagrama 6 · Secuencia: descarga con validación de permisos
+
+skinparam shadowing false
+
+actor "Navegador" as nav
+participant "API" as api
+participant "Base de datos" as db
+participant "Almacenamiento" as s3
+
+nav -> api : "GET /api/files/{id}/content"
+api -> db : busca el archivo (el alcance se aplica en la base)
+note right of db
+  Si el archivo no existe o queda
+  fuera del alcance, la consulta
+  devuelve cero filas.
+end note
+
+alt dentro del alcance
+  db --> api : metadatos y clave interna
+  api -> s3 : recupera el contenido
+  s3 --> api : contenido
+  api -> db : registra la descarga
+  api --> nav : "200 + archivo"
+else fuera del alcance o inexistente
+  api -> db : registra el acceso denegado
+  api --> nav : "404 (no distingue los dos casos)"
+end
+@enduml

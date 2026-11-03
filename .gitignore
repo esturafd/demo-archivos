@@ -17,3 +17,7 @@ __pycache__/
 # Imágenes Docker descargadas (artefactos locales)
 /dist/
 
+# Documentación
+documentation/manuales/*.pdf
+documentation/manuales/**/*.png
+
